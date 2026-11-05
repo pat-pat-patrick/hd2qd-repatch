@@ -9,8 +9,8 @@ namespace Hd2Qd.Repatch
     /// <summary>A patch archive's main file: a 72-byte header (magic 0xF0000011, the type count
     /// at 4, the resource count at 8), 32-byte type rows (type id at 8, count at 16), then
     /// 80-byte resource rows (id, type, main bytes' offset at 16 and size at 56), then the
-    /// resources' main bytes. Only the main file changes when a model is updated: the vertex and
-    /// index data in .gpu_resources and .stream stay as they are.</summary>
+    /// resources' main bytes. Only the main file changes when a resource is brought up to the
+    /// game's; a bank's streamed media lives in .stream, which a repair never touches.</summary>
     static class Patches
     {
         public static readonly Regex Main = new Regex(@"^[0-9a-f]{16}\.patch_\d+$");
@@ -74,18 +74,23 @@ namespace Hd2Qd.Repatch
             return rows;
         }
 
-        /// <summary>What one archive's models need: each model's id with the game's verdict
-        /// (Need.None also for a model the game does not have: a model the mod adds).</summary>
+        /// <summary>What one archive needs: each resource of the kinds this plugin repairs (a
+        /// model, a sound bank, a strings table) with the game's verdict; a resource the game
+        /// does not have counts as added. NeedsBanks says the archive holds banks or tables but
+        /// the game's index was not read yet, so the check must run again with it.</summary>
         public sealed class Scan
         {
             public string Path;
             public int Models, Update, Newer, Added;
+            public int Banks, BankUpdate, BankNewer;
+            public int Tables, TableUpdate, TableNewer;
+            public bool NeedsBanks;
             public string Error;
         }
 
-        /// <summary>Reads only the header and each model's version (cheap enough for every
-        /// mod's row).</summary>
-        public static Scan Check(string path, GameUnits game)
+        /// <summary>Reads the header, and each model's version (cheap) or each bank's and table's
+        /// bytes (bigger, but only for mods that carry them).</summary>
+        public static Scan Check(string path, GameUnits game, GameBanks banks)
         {
             var s = new Scan { Path = path };
             try
@@ -99,7 +104,11 @@ namespace Hd2Qd.Repatch
                     var types = new byte[tc * 32];
                     if (f.Read(types, 0, types.Length) < types.Length) { s.Error = "the archive's header is damaged"; return s; }
                     bool any = false;
-                    for (int t = 0; t < tc; t++) any |= BitConverter.ToUInt64(types, t * 32 + 8) == GameUnits.Unit;
+                    for (int t = 0; t < tc; t++)
+                    {
+                        var ty = BitConverter.ToUInt64(types, t * 32 + 8);
+                        any |= ty == GameUnits.Unit || ty == GameBanks.Bank || ty == GameBanks.Table;
+                    }
                     if (!any) return s;
                     var rows = new byte[fc * 80];
                     if (f.Read(rows, 0, rows.Length) < rows.Length) { s.Error = "the archive's header is damaged"; return s; }
@@ -107,17 +116,54 @@ namespace Hd2Qd.Repatch
                     for (int i = 0; i < fc; i++)
                     {
                         int o = i * 80;
-                        if (BitConverter.ToUInt64(rows, o + 8) != GameUnits.Unit) continue;
-                        s.Models++;
-                        ulong id = BitConverter.ToUInt64(rows, o), off = BitConverter.ToUInt64(rows, o + 16);
+                        ulong ty = BitConverter.ToUInt64(rows, o + 8), id = BitConverter.ToUInt64(rows, o);
+                        ulong off = BitConverter.ToUInt64(rows, o + 16);
                         uint size = BitConverter.ToUInt32(rows, o + 56);
-                        if (!game.Units.TryGetValue(id, out var g)) { s.Added++; continue; }
-                        if (size < UnitBytes.Version + 4 || off + size > (ulong)f.Length) { s.Error = "a model lies outside the archive"; continue; }
-                        f.Seek((long)off + UnitBytes.Version, SeekOrigin.Begin);
-                        if (f.Read(v, 0, 4) < 4) { s.Error = "a model lies outside the archive"; continue; }
-                        var n = UnitBytes.Judge(BitConverter.ToUInt32(v, 0), g.Version);
-                        if (n == Need.Update) s.Update++;
-                        else if (n == Need.Newer) s.Newer++;
+                        if (ty == GameUnits.Unit)
+                        {
+                            s.Models++;
+                            if (!game.Units.TryGetValue(id, out var g)) { s.Added++; continue; }
+                            if (size < UnitBytes.Version + 4 || off + size > (ulong)f.Length) { s.Error = "a model lies outside the archive"; continue; }
+                            f.Seek((long)off + UnitBytes.Version, SeekOrigin.Begin);
+                            if (f.Read(v, 0, 4) < 4) { s.Error = "a model lies outside the archive"; continue; }
+                            var n = UnitBytes.Judge(BitConverter.ToUInt32(v, 0), g.Version);
+                            if (n == Need.Update) s.Update++;
+                            else if (n == Need.Newer) s.Newer++;
+                        }
+                        else if (ty == GameBanks.Bank || ty == GameBanks.Table)
+                        {
+                            bool bank = ty == GameBanks.Bank;
+                            if (bank) s.Banks++; else s.Tables++;
+                            if (banks == null) { s.NeedsBanks = true; continue; }
+                            if (size < 4 || off + size > (ulong)f.Length) { s.Error = (bank ? "a bank" : "a strings table") + " lies outside the archive"; continue; }
+                            var bytes = new byte[size];
+                            f.Seek((long)off, SeekOrigin.Begin);
+                            if (f.Read(bytes, 0, bytes.Length) < bytes.Length) { s.Error = (bank ? "a bank" : "a strings table") + " lies outside the archive"; continue; }
+                            if (bank)
+                            {
+                                if (!banks.BankRows.ContainsKey(id)) { s.Added++; continue; }        // the mod's own bank
+                                Banks.BankFile mine;
+                                try { mine = Banks.Parse(Banks.Unwrap(bytes, id).Raw); }
+                                catch (InvalidDataException e) { s.Error = e.Message; continue; }
+                                var official = banks.OfficialBank(id);
+                                if (official == null) { s.Error = "the game's own bank of " + id.ToString("x16") + " cannot be read"; continue; }
+                                var n = Banks.Judge(mine, official);
+                                if (n == Need.Update) s.BankUpdate++;
+                                else if (n == Need.Newer) s.BankNewer++;
+                            }
+                            else
+                            {
+                                if (!banks.Tables.ContainsKey(id)) { s.Added++; continue; }          // the mod's own table
+                                Subtitles.Table mine;
+                                try { mine = Subtitles.Parse(bytes); }
+                                catch (InvalidDataException e) { s.Error = e.Message; continue; }
+                                var official = banks.OfficialTable(id);
+                                if (official == null) { s.Error = "the game's own strings table of " + id.ToString("x16") + " cannot be read"; continue; }
+                                var n = Subtitles.Judge(mine, official);
+                                if (n == Need.Update) s.TableUpdate++;
+                                else if (n == Need.Newer) s.TableNewer++;
+                            }
+                        }
                     }
                 }
             }
@@ -128,40 +174,52 @@ namespace Hd2Qd.Repatch
         /// <summary>What Update did to one archive.</summary>
         public sealed class Result
         {
-            public int Updated, Formats, Lods, Added, Current;
+            public int Updated, Formats, Lods, Banks, Tables, Added, Current;
             public List<string> Refused = new List<string>();
+            public List<string> Notes = new List<string>();
         }
 
-        /// <summary>The archive's main file with every model the game has brought up to the game's
-        /// version; null when none needed it. Models the game does not have are kept as they are
-        /// (hd2-repatcher drops them; a mod may add models of its own). A model that cannot be
-        /// updated is left as it is and named in Refused. Everything else keeps its bytes: the
-        /// resources after a model whose size changed move, and their rows' offsets with them.</summary>
-        public static byte[] Update(byte[] toc, GameUnits game, Result res)
+        /// <summary>The archive's main file with every resource of the kinds this plugin repairs
+        /// brought up to the game's; null when none needed it. Resources the game does not have
+        /// are kept as they are (a mod may add its own). One that cannot be brought up is left as
+        /// it is and named in Refused. Everything else keeps its bytes: the resources after one
+        /// whose size changed move, and their rows' offsets with them.</summary>
+        public static byte[] Update(byte[] toc, GameUnits game, GameBanks banks, Result res)
         {
             var rows = Rows(toc);
             var fresh = new Dictionary<int, byte[]>();          // row index -> its new bytes
             for (int i = 0; i < rows.Count; i++)
             {
                 var r = rows[i];
-                if (r.Type != GameUnits.Unit) continue;
-                if (!game.Units.TryGetValue(r.Id, out var g)) { res.Added++; continue; }
-                var unit = new byte[r.Size];
-                Buffer.BlockCopy(toc, (int)r.Off, unit, 0, unit.Length);
-                try
+                if (r.Type != GameUnits.Unit && r.Type != GameBanks.Bank && r.Type != GameBanks.Table) continue;
+                byte[] bytes = null;
+                if (r.Type == GameUnits.Unit)
                 {
-                    var u = UnitBytes.Update(unit, g.Version, g.Lod, out int formats, out bool lod);
-                    if (u == null) { res.Current++; continue; }
-                    fresh[i] = u;
-                    res.Updated++;
-                    res.Formats += formats;
-                    if (lod) res.Lods++;
+                    if (!game.Units.TryGetValue(r.Id, out var g)) { res.Added++; continue; }
+                    var unit = new byte[r.Size];
+                    Buffer.BlockCopy(toc, (int)r.Off, unit, 0, unit.Length);
+                    try
+                    {
+                        var u = UnitBytes.Update(unit, g.Version, g.Lod, out int formats, out bool lod);
+                        if (u == null) { res.Current++; continue; }
+                        bytes = u;
+                        res.Updated++;
+                        res.Formats += formats;
+                        if (lod) res.Lods++;
+                    }
+                    catch (InvalidDataException e) { res.Refused.Add(r.Id.ToString("x16") + ": " + e.Message); }
                 }
-                catch (InvalidDataException e) { res.Refused.Add(r.Id.ToString("x16") + ": " + e.Message); }
+                else
+                {
+                    var resource = new byte[r.Size];
+                    Buffer.BlockCopy(toc, (int)r.Off, resource, 0, resource.Length);
+                    bytes = r.Type == GameBanks.Bank ? Banks.Repair(resource, r.Id, banks, res) : Subtitles.Repair(resource, r.Id, banks, res);
+                }
+                if (bytes != null) fresh[i] = bytes;
             }
             if (fresh.Count == 0) return null;
 
-            // the bytes in the file's order, the updated models in place of the old ones
+            // the bytes in the file's order, the updated resources in place of the old ones
             var order = Enumerable.Range(0, rows.Count).Where(i => rows[i].Size > 0).OrderBy(i => rows[i].Off).ToList();
             var outp = new MemoryStream(toc.Length + fresh.Values.Sum(u => u.Length));
             int b = 72 + (int)BitConverter.ToUInt32(toc, 4) * 32 + rows.Count * 80;

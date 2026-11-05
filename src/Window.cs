@@ -77,7 +77,7 @@ namespace Hd2Qd.Repatch
                     mods = await Task.Run(() =>
                     {
                         var game = GameUnits.Load(home, data);
-                        return Library(host).Select(m => Repairs.Scan(home, m.Name, m.Path, m.Enabled, game)).ToList();
+                        return Library(host).Select(m => Repairs.Scan(home, m.Name, m.Path, m.Enabled, game, data)).ToList();
                     });
                 }
                 catch (Exception e)
@@ -111,15 +111,15 @@ namespace Hd2Qd.Repatch
 
             void Show(List<Repairs.Mod> mods)
             {
-                var shown = mods.Where(m => m.Update + m.Newer > 0 || m.Undoable || m.Errors.Count > 0)
-                    .OrderBy(m => m.Update > 0 ? 0 : m.Errors.Count > 0 ? 1 : m.Newer > 0 ? 2 : 3).ThenBy(m => m.Name).ToList();
-                int outdated = mods.Count(m => m.Update > 0);
-                int current = mods.Count(m => m.Models > m.Added && m.Update + m.Newer == 0 && m.Errors.Count == 0 && !m.Undoable);
+                var shown = mods.Where(m => Stale(m) + Newer(m) > 0 || m.Undoable || m.Errors.Count > 0)
+                    .OrderBy(m => Stale(m) > 0 ? 0 : m.Errors.Count > 0 ? 1 : Newer(m) > 0 ? 2 : 3).ThenBy(m => m.Name).ToList();
+                int outdated = mods.Count(m => Stale(m) > 0);
+                int current = mods.Count(m => m.Models + m.Banks + m.Tables > m.Added && Stale(m) + Newer(m) == 0 && m.Errors.Count == 0 && !m.Undoable);
                 Button all = null;
                 if (outdated > 1)
                 {
                     all = new Button { Content = T("repair_all"), Style = S("Primary"), MinHeight = 36, Padding = new Thickness(16, 0, 16, 0) };
-                    all.Click += (s, e) => Repair(mods.Where(m => m.Update > 0).ToList());
+                    all.Click += (s, e) => Repair(mods.Where(m => Stale(m) > 0).ToList());
                 }
                 Head(outdated > 0 ? T("mods_outdated", outdated) : T("mods_current"), all);
                 list.Children.Clear();
@@ -127,6 +127,23 @@ namespace Hd2Qd.Repatch
                 foreach (var m in shown) list.Children.Add(Row(m));
                 if (current > 0)
                     list.Children.Add(Small(T("others_current", current), new Thickness(0, 12, 0, 0)));
+            }
+
+            /// <summary>How many of the mod's resources an earlier version of the game was made
+            /// for, over every kind.</summary>
+            static int Stale(Repairs.Mod m) => m.Update + m.BankUpdate + m.TableUpdate;
+
+            static int Newer(Repairs.Mod m) => m.Newer + m.BankNewer + m.TableNewer;
+
+            /// <summary>The row's details: what the mod has of each kind, or that it is newer.</summary>
+            string Said(Repairs.Mod m)
+            {
+                if (Newer(m) > 0) return T("row_newer", Newer(m));
+                var said = new List<string>();
+                if (m.Update > 0) said.Add(T("row_outdated", m.Update));
+                if (m.BankUpdate > 0) said.Add(T("row_banks_outdated", m.BankUpdate));
+                if (m.TableUpdate > 0) said.Add(T("row_tables_outdated", m.TableUpdate));
+                return string.Join(" ", said);
             }
 
             static readonly GridLength[] Columns = { new GridLength(1, GridUnitType.Star), new GridLength(120), new GridLength(1.3, GridUnitType.Star), new GridLength(110) };
@@ -151,22 +168,19 @@ namespace Hd2Qd.Repatch
                     var name = Text(m.Name, 0);
                     if (!m.Enabled) name.Foreground = B("Muted");
                     Cell(0, name);
-                    var (bt, bc) = m.Update > 0 ? (T("badge_outdated"), "Yellow") : m.Errors.Count > 0 ? (T("badge_unreadable"), "Red")
-                                 : m.Newer > 0 ? (T("badge_newer"), "Muted") : (T("badge_repaired"), "Blue");
+                    var (bt, bc) = Stale(m) > 0 ? (T("badge_outdated"), "Yellow") : m.Errors.Count > 0 ? (T("badge_unreadable"), "Red")
+                                 : Newer(m) > 0 ? (T("badge_newer"), "Muted") : (T("badge_repaired"), "Blue");
                     Cell(1, new Border
                     {
                         BorderBrush = B(bc), BorderThickness = new Thickness(1), Padding = new Thickness(6, 1, 6, 1), HorizontalAlignment = HorizontalAlignment.Left,
                         VerticalAlignment = VerticalAlignment.Center, Child = new TextBlock { Text = bt, FontSize = 12, FontWeight = FontWeights.SemiBold, Foreground = B(bc) },
                     });
-                    string said = m.Update > 0 ? T("row_outdated", m.Update)
-                                : m.Errors.Count > 0 ? m.Errors[0]
-                                : m.Newer > 0 ? T("row_newer", m.Newer)
-                                : T("row_repaired");
+                    string said = m.Errors.Count > 0 && Stale(m) == 0 ? m.Errors[0] : Said(m);
                     var details = Text(said, 2);
                     details.ToolTip = m.Errors.Count > 0 ? string.Join("\n", m.Errors) : said;
                     Cell(2, details);
                     Button act = null;
-                    if (m.Update > 0) { act = new Button { Content = T("repair"), Style = S("Primary") }; act.Click += (s, e) => Repair(new List<Repairs.Mod> { m }); }
+                    if (Stale(m) > 0) { act = new Button { Content = T("repair"), Style = S("Primary") }; act.Click += (s, e) => Repair(new List<Repairs.Mod> { m }); }
                     else if (m.Undoable) { act = new Button { Content = T("undo"), Style = S("Ghost") }; act.Click += (s, e) => Undo(m); }
                     if (act != null)
                     {
@@ -204,15 +218,15 @@ namespace Hd2Qd.Repatch
                         var game = GameUnits.Load(home, data);
                         return mods.Select(m =>
                         {
-                            try { return (m.Name, Repairs.Repair(home, m.Path, game), (string)null); }
+                            try { return (m.Name, Repairs.Repair(home, m.Path, game, data), (string)null); }
                             catch (Exception e) when (e is System.IO.IOException || e is UnauthorizedAccessException) { return (m.Name, (Repairs.Done)null, e.Message); }
                         }).ToList();
                     });
                 }
                 finally { busy = false; }
-                int models = results.Where(r => r.Done != null).Sum(r => r.Done.Models);
+                int fixed_ = results.Where(r => r.Done != null).Sum(r => r.Done.Models + r.Done.Banks + r.Done.Tables);
                 var failed = results.Where(r => r.Error != null || r.Done.Refused.Count > 0).ToList();
-                Changed(T("repaired", models));
+                Changed(T("repaired", fixed_));
                 if (failed.Count > 0)
                     Tell(T("repair_failed") + string.Join("\n", failed.Select(r =>
                         r.Name + ": " + (r.Error ?? string.Join("; ", r.Done.Refused)) +

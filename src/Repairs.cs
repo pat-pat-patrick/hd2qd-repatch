@@ -7,42 +7,56 @@ using System.Text;
 
 namespace Hd2Qd.Repatch
 {
-    /// <summary>A library mod's models against the game's, and their repair. A repair keeps a
-    /// copy of every main file it changes in the manager's settings folder (repatch\backups),
-    /// so it can be undone. It never writes into a file: it writes a new one beside it and puts
-    /// it in the old one's place, because the manager deploys library files as hard links into
-    /// the game folder, and the deployed copy must stay as it is until the next deploy.</summary>
+    /// <summary>A library mod's models, sound banks and strings tables against the game's, and
+    /// their repair. A repair keeps a copy of every main file it changes in the manager's
+    /// settings folder (repatch\backups), so it can be undone. It never writes into a file: it
+    /// writes a new one beside it and puts it in the old one's place, because the manager deploys
+    /// library files as hard links into the game folder, and the deployed copy must stay as it is
+    /// until the next deploy.</summary>
     static class Repairs
     {
-        /// <summary>One mod: its archives' models that need an update, are newer than the game's,
-        /// or that the game does not have; what could not be read; whether a repair can be undone.</summary>
+        /// <summary>One mod: its archives' resources of each kind that need an update, are newer
+        /// than the game's, or that the game does not have; what could not be read; whether a
+        /// repair can be undone.</summary>
         public sealed class Mod
         {
             public string Name, Path;
             public bool Enabled;
             public int Models, Update, Newer, Added;
+            public int Banks, BankUpdate, BankNewer;
+            public int Tables, TableUpdate, TableNewer;
             public List<string> Errors = new List<string>();
             public bool Undoable;
         }
 
         static readonly object gate = new object();
-        static readonly Dictionary<string, (long Len, long Time, GameUnits Game, Patches.Scan Scan)> scans =
-            new Dictionary<string, (long, long, GameUnits, Patches.Scan)>(StringComparer.OrdinalIgnoreCase);
+        static readonly Dictionary<string, (long Len, long Time, GameUnits Game, GameBanks Banks, Patches.Scan Scan)> scans =
+            new Dictionary<string, (long, long, GameUnits, GameBanks, Patches.Scan)>(StringComparer.OrdinalIgnoreCase);
 
-        /// <summary>A mod's state; each archive read again only when it or the game changed.</summary>
-        public static Mod Scan(string home, string name, string path, bool enabled, GameUnits game)
+        /// <summary>A mod's state; each archive read again only when it, the game or the game's
+        /// bank index changed.</summary>
+        public static Mod Scan(string home, string name, string path, bool enabled, GameUnits game, string data)
         {
             var m = new Mod { Name = name, Path = path, Enabled = enabled, Undoable = Last(home, path) != null };
+            GameBanks banks = data == null ? null : GameBanks.Cached(home, data);
             foreach (var f in Patches.Files(path))
             {
                 Patches.Scan s;
                 var fi = new FileInfo(f);
                 lock (gate)
                 {
-                    if (scans.TryGetValue(f, out var c) && c.Len == fi.Length && c.Time == fi.LastWriteTimeUtc.Ticks && c.Game == game) s = c.Scan;
-                    else scans[f] = (fi.Length, fi.LastWriteTimeUtc.Ticks, game, s = Patches.Check(f, game));
+                    if (scans.TryGetValue(f, out var c) && c.Len == fi.Length && c.Time == fi.LastWriteTimeUtc.Ticks && c.Game == game && c.Banks == banks)
+                        s = c.Scan;
+                    else scans[f] = (fi.Length, fi.LastWriteTimeUtc.Ticks, game, banks, s = Patches.Check(f, game, banks));
+                }
+                if (s.NeedsBanks && banks == null)
+                {
+                    banks = GameBanks.Load(home, data);
+                    lock (gate) scans[f] = (fi.Length, fi.LastWriteTimeUtc.Ticks, game, banks, s = Patches.Check(f, game, banks));
                 }
                 m.Models += s.Models; m.Update += s.Update; m.Newer += s.Newer; m.Added += s.Added;
+                m.Banks += s.Banks; m.BankUpdate += s.BankUpdate; m.BankNewer += s.BankNewer;
+                m.Tables += s.Tables; m.TableUpdate += s.TableUpdate; m.TableNewer += s.TableNewer;
                 if (s.Error != null) m.Errors.Add(System.IO.Path.GetFileName(f) + ": " + s.Error);
             }
             return m;
@@ -51,31 +65,35 @@ namespace Hd2Qd.Repatch
         /// <summary>What a repair did.</summary>
         public sealed class Done
         {
-            public int Files, Models, Formats, Lods;
+            public int Files, Models, Formats, Lods, Banks, Tables;
             public List<string> Refused = new List<string>();
+            public List<string> Notes = new List<string>();
             public string Backup;
         }
 
         static string Backups(string home) => System.IO.Path.Combine(home, "repatch", "backups");
 
-        /// <summary>Repairs every archive of the mod whose models need it. Every changed file is
-        /// copied to a new backup folder first; nothing is changed when nothing needs it. A file
-        /// that cannot be repaired (damaged, or a model it cannot update) is named in Refused and
-        /// the rest go on.</summary>
-        public static Done Repair(string home, string modPath, GameUnits game)
+        /// <summary>Repairs every archive of the mod whose resources need it. Every changed file
+        /// is copied to a new backup folder first; nothing is changed when nothing needs it. A
+        /// file that cannot be repaired (damaged, or a resource it cannot update) is named in
+        /// Refused and the rest go on.</summary>
+        public static Done Repair(string home, string modPath, GameUnits game, string data)
         {
             var done = new Done();
+            var banks = data != null && GameBanks.Needed(modPath) ? GameBanks.Load(home, data) : null;
             var plans = new List<(string File, byte[] Bytes)>();
             foreach (var f in Patches.Files(modPath))
             {
                 var res = new Patches.Result();
                 byte[] fixedBytes;
-                try { fixedBytes = Patches.Update(File.ReadAllBytes(f), game, res); }
+                try { fixedBytes = Patches.Update(File.ReadAllBytes(f), game, banks, res); }
                 catch (InvalidDataException e) { done.Refused.Add(Rel(modPath, f) + ": " + e.Message); continue; }
                 done.Refused.AddRange(res.Refused.Select(r => Rel(modPath, f) + ": " + r));
+                done.Notes.AddRange(res.Notes.Select(r => Rel(modPath, f) + ": " + r));
                 if (fixedBytes == null) continue;
                 plans.Add((f, fixedBytes));
                 done.Models += res.Updated; done.Formats += res.Formats; done.Lods += res.Lods;
+                done.Banks += res.Banks; done.Tables += res.Tables;
             }
             if (plans.Count == 0) return done;
 
