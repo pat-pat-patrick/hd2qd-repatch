@@ -63,7 +63,7 @@ namespace Hd2Qd.Repatch
             var data = Data(host);
             var game = GameUnits.Cached(home, data);
             if (game == null) return null;
-            var m = Repairs.Scan(home, null, modFolder, false, game, data);
+            var m = Repairs.Scan(home, null, modFolder, false, game, data, cachedBanksOnly: true);
             var lang = Words.Lang(host);
             if (m.Update + m.BankUpdate + m.TableUpdate > 0)
             {

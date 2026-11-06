@@ -45,8 +45,9 @@ namespace Hd2Qd.Repatch
         }
 
         /// <summary>A mod's state; each archive read again only when it, the game or the game's
-        /// bank index changed.</summary>
-        public static Mod Scan(string home, string name, string path, bool enabled, GameUnits game, string data)
+        /// bank index changed. CachedBanksOnly keeps the scan from building the bank index: the
+        /// row notes must stay cheap, and the window and the commands can afford the walk.</summary>
+        public static Mod Scan(string home, string name, string path, bool enabled, GameUnits game, string data, bool cachedBanksOnly = false)
         {
             var m = new Mod { Name = name, Path = path, Enabled = enabled, Undoable = Last(home, path) != null };
             GameBanks banks = data == null ? null : GameBanks.Cached(home, data);
@@ -60,7 +61,7 @@ namespace Hd2Qd.Repatch
                         s = c.Scan;
                     else scans[f] = (fi.Length, fi.LastWriteTimeUtc.Ticks, game, banks, s = Patches.Check(f, game, banks));
                 }
-                if (s.NeedsBanks && banks == null && data != null)
+                if (s.NeedsBanks && banks == null && data != null && !cachedBanksOnly)
                 {
                     banks = GameBanks.Load(home, data);
                     lock (gate) scans[f] = (fi.Length, fi.LastWriteTimeUtc.Ticks, game, banks, s = Patches.Check(f, game, banks));

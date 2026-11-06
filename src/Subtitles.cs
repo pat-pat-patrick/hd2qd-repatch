@@ -37,10 +37,11 @@ namespace Hd2Qd.Repatch
             var t = new Table { Version = version, Language = count > 0 ? BitConverter.ToUInt32(b, 12) : 0, Ids = new uint[count], Texts = new byte[count][] };
             int n = (int)count, at = 12 + (count > 0 ? 4 : 0);
             for (int i = 0; i < n; i++) t.Ids[i] = BitConverter.ToUInt32(b, at + 4 * i);
+            int blob = at + 8 * n;                                       // the texts begin after the ids and the offsets
             for (int i = 0; i < n; i++)
             {
                 uint off = BitConverter.ToUInt32(b, at + 4 * n + 4 * i);
-                if (off >= b.Length) throw new InvalidDataException("a text of the strings table lies outside it");
+                if (off < blob || off >= b.Length) throw new InvalidDataException("a text of the strings table lies outside the texts");
                 int end = Array.IndexOf(b, (byte)0, (int)off);
                 if (end < 0) throw new InvalidDataException("a text of the strings table does not end");
                 t.Texts[i] = Slice(b, (int)off, end - (int)off);
@@ -49,11 +50,16 @@ namespace Hd2Qd.Repatch
         }
 
         /// <summary>What a mod's table needs against the game's (a newer format version, or
-        /// entries the game has added).</summary>
-        public static Need Judge(Table mine, Table game) =>
-            mine.Version > game.Version ? Need.Newer
-            : mine.Version < game.Version || game.IdSet.Any(id => !mine.IdSet.Contains(id)) ? Need.Update
-            : Need.None;
+        /// entries the game has added). A table for another language than the game's needs
+        /// nothing here: a merge would mix the two, so it is left as it is rather than flagged
+        /// for a repair that could never take.</summary>
+        public static Need Judge(Table mine, Table game)
+        {
+            if (mine.Language != game.Language) return Need.None;
+            if (mine.Version > game.Version) return Need.Newer;
+            if (mine.Version < game.Version || game.IdSet.Any(id => !mine.IdSet.Contains(id))) return Need.Update;
+            return Need.None;
+        }
 
         /// <summary>The game's table with the mod's texts over it: the game's entries keep their
         /// order and its version and language, the mod's texts replace the entries they know, its
@@ -63,20 +69,26 @@ namespace Hd2Qd.Repatch
         public static byte[] Merge(Table game, Table mine)
         {
             if (game.Language != mine.Language) throw new InvalidDataException("the mod's table is for another language than the game's");
-            var mineBy = new Dictionary<uint, byte[]>();
-            for (int i = 0; i < mine.Ids.Length; i++) mineBy[mine.Ids[i]] = mine.Texts[i];
+            var mineBy = ByText(mine);
+            var gameBy = ByText(game);
             var ids = game.Ids.Concat(mineOnly(mine, game)).ToArray();
             var texts = new byte[ids.Length][];
-            for (int i = 0; i < ids.Length; i++) texts[i] = mineBy.TryGetValue(ids[i], out var text) ? text : TextOf(game, ids[i]);
+            for (int i = 0; i < ids.Length; i++)
+            {
+                if (!mineBy.TryGetValue(ids[i], out var text) && !gameBy.TryGetValue(ids[i], out text))
+                    throw new InvalidDataException("the game's table does not hold entry " + ids[i]);
+                texts[i] = text;
+            }
             return Write(game.Version, game.Language, ids, texts);
         }
 
         static IEnumerable<uint> mineOnly(Table mine, Table game) => mine.Ids.Where(id => !game.IdSet.Contains(id)).Distinct();
 
-        static byte[] TextOf(Table game, uint id)
+        static Dictionary<uint, byte[]> ByText(Table t)
         {
-            for (int i = 0; i < game.Ids.Length; i++) if (game.Ids[i] == id) return game.Texts[i];
-            throw new InvalidDataException("the game's table does not hold entry " + id);
+            var by = new Dictionary<uint, byte[]>(t.Ids.Length);
+            for (int i = 0; i < t.Ids.Length; i++) by[t.Ids[i]] = t.Texts[i];
+            return by;
         }
 
         /// <summary>The table's bytes: magic, version, count, language, ids, absolute offsets and
@@ -113,8 +125,8 @@ namespace Hd2Qd.Repatch
 
         /// <summary>One strings resource of a mod, merged with the game's table of the same id;
         /// null when it needs nothing. A table the game does not have counts as added; one that
-        /// cannot be read, that is newer than the game's, or that is for another language, is
-        /// refused.</summary>
+        /// cannot be read, that is newer than the game's, or that is for another language (which
+        /// the judge leaves alone), is refused.</summary>
         public static byte[] Repair(byte[] resource, ulong fileId, GameBanks game, Patches.Result res)
         {
             Table mine;
@@ -132,20 +144,16 @@ namespace Hd2Qd.Repatch
             try
             {
                 var back = Parse(fresh);
+                var backBy = ByText(back);
+                var mineBy = ByText(mine);
                 if (back.Ids.Length != official.Ids.Length + mineOnly(mine, official).Count()
                     || back.Version != official.Version || back.Language != official.Language
-                    || mine.Ids.Any(id => !TextsEqual(TextOf(back, id), mineBy(mine, id))))
+                    || mine.Ids.Any(id => !backBy.TryGetValue(id, out var got) || !got.SequenceEqual(mineBy[id])))
                     throw new InvalidDataException("the merged table does not read back as it was built");
             }
             catch (InvalidDataException e) { res.Refused.Add(fileId.ToString("x16") + ": " + e.Message); return null; }
             res.Tables++;
             return fresh;
-        }
-
-        static byte[] mineBy(Table mine, uint id)
-        {
-            for (int i = 0; i < mine.Ids.Length; i++) if (mine.Ids[i] == id) return mine.Texts[i];
-            return null;
         }
 
         static byte[] Slice(byte[] b, int at, int len)
@@ -154,7 +162,5 @@ namespace Hd2Qd.Repatch
             Buffer.BlockCopy(b, at, t, 0, len);
             return t;
         }
-
-        static bool TextsEqual(byte[] a, byte[] b) => a != null && b != null && a.SequenceEqual(b);
     }
 }

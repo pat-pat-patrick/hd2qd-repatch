@@ -71,7 +71,9 @@ namespace Hd2Qd.Repatch
         /// <summary>A bank read once: its version, its chunks, its HIRC entries, its Sounds, and
         /// where its media sit in the bank's own bytes. The media are slices, not copies: a scan
         /// reads hundreds of banks and only compares them; a repair takes bytes out with
-        /// MediaBytes and Hirc. Raw is the bank they slice into, and is dropped by a light read.</summary>
+        /// MediaBytes and Hirc. Raw is the bank they slice into, and is dropped by a light read.
+        /// UnknownSounds counts the Sounds of a layout this plugin does not read; a bank that
+        /// has one is never rewritten, because a media swap could not keep its mem size true.</summary>
         public sealed class BankFile
         {
             public uint Version;
@@ -81,6 +83,7 @@ namespace Hd2Qd.Repatch
             public Dictionary<uint, (int Off, int Len)> Media = new Dictionary<uint, (int, int)>();
             public byte[] Raw;
             public int HircAt, HircLen;
+            public int UnknownSounds;
 
             public byte[] MediaBytes(uint id) { var m = Media[id]; return Banks.Slice(Raw, m.Off, m.Len); }
             public byte[] Hirc() => Banks.Slice(Raw, HircAt, HircLen);
@@ -140,6 +143,7 @@ namespace Hd2Qd.Repatch
                     f.Media[id] = (dataAt + (int)off, (int)len);
                 }
             }
+            if (f.HircLen < 4) throw new InvalidDataException("the bank's HIRC header is damaged");
             int n = BitConverter.ToInt32(raw, f.HircAt);
             if (n < 0 || 4L + n * 5 > f.HircLen) throw new InvalidDataException("the bank's HIRC header is damaged");
             int q = f.HircAt + 4;
@@ -150,10 +154,10 @@ namespace Hd2Qd.Repatch
                 if (size < 4 || q + 5L + size > raw.Length) throw new InvalidDataException("an entry of the bank's HIRC runs past its end");
                 uint id = BitConverter.ToUInt32(raw, q + 5);
                 f.Entries.Add(id);
-                if (raw[q] == 2 && size >= 17 + 4)
+                if (raw[q] == 2)
                 {
                     int body = q + 9;                                        // past the type, the size and the id
-                    if (BitConverter.ToUInt32(raw, body) == SoundGuard)
+                    if (size >= 21 && BitConverter.ToUInt32(raw, body) == SoundGuard)
                         f.Sounds.Add(new Sound
                         {
                             Id = id,
@@ -162,6 +166,7 @@ namespace Hd2Qd.Repatch
                             MemSize = BitConverter.ToUInt32(raw, body + 13),
                             MemAt = body + 13 - f.HircAt,                    // where it sits in the HIRC chunk's bytes
                         });
+                    else f.UnknownSounds++;                                  // a Sound of a layout this plugin does not read
                 }
                 q += 5 + size;
             }
@@ -189,6 +194,8 @@ namespace Hd2Qd.Repatch
         /// caller then puts the game's bank in its place. Neither input is changed.</summary>
         public static byte[] Update(BankFile game, BankFile mine)
         {
+            if (game.UnknownSounds > 0 || mine.UnknownSounds > 0)
+                throw new InvalidDataException("the bank has a Sound of a layout this plugin does not know, so its media are left alone");
             var changed = new Dictionary<uint, byte[]>();
             foreach (var kv in mine.Media)
                 if (game.Media.TryGetValue(kv.Key, out var g))
@@ -267,6 +274,8 @@ namespace Hd2Qd.Repatch
             var need = Judge(mine, official);
             if (need == Need.None) return null;
             if (need == Need.Newer) { res.Refused.Add(fileId.ToString("x16") + ": the bank was made for a newer version of the game"); return null; }
+            if (official.UnknownSounds > 0 || mine.UnknownSounds > 0)
+            { res.Refused.Add(fileId.ToString("x16") + ": the bank has a Sound of a layout this plugin does not know, so it is left as it is"); return null; }
             var officialRaw = game.ReadBank(fileId);
             if (officialRaw == null) { res.Refused.Add(fileId.ToString("x16") + ": the game's own bank cannot be read"); return null; }
             try
@@ -374,7 +383,9 @@ namespace Hd2Qd.Repatch
                 WriteCache(Path.Combine(home, CacheName), stamp, c);
                 lock (gate)
                 {
-                    if (held.Held != null && !ReferenceEquals(held.Held, c)) held.Held.Dispose();     // the game changed under it
+                    // the old index is not disposed here: a check or repair that started before
+                    // the game changed may still hold it, and its reads then report unreadable
+                    // for that round instead of failing; the streams close when it is collected
                     held = (stamp, data, c);
                 }
                 return c;

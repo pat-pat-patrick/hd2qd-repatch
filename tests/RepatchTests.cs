@@ -634,16 +634,61 @@ namespace Hd2Qd.Repatch.Tests
         }
 
         [Fact]
-        public void A_table_of_another_language_or_a_newer_one_is_refused()
+        public void A_table_of_another_language_is_left_alone_and_a_newer_one_is_refused()
         {
             GameNowWithAudio();
-            var other = Archive((T1, GameBanks.Table, Table(1, 0x1234, (1u, "A"), (2u, "B"))));
+            var other = Archive((T1, GameBanks.Table, Table(1, 0x1234, (1u, "A"), (2u, "B"))));   // another language, entry 3 missing
             var newer = Archive((T1, GameBanks.Table, Table(2, Lang, (1u, "A"), (2u, "B"))));
             var dir = AddMod("Other", ("9ba626afa44a3aa3.patch_0", other), ("9ba626afa44a3aa3.patch_1", newer));
+            var m = Repairs.Scan(Home, "Other", dir, true, Units(), Data);
+            Assert.Equal(0, m.TableUpdate);                                 // a merge could never take: not flagged
+            Assert.Empty(m.Errors);
             var done = Repairs.Repair(Home, dir, Units(), Data);
             Assert.Equal(0, done.Files);
-            Assert.Contains("another language", string.Join("\n", done.Refused));
+            Assert.Equal(other, File.ReadAllBytes(Path.Combine(dir, "9ba626afa44a3aa3.patch_0")));
             Assert.Contains("newer version of the game", string.Join("\n", done.Refused));
+        }
+
+        [Fact]
+        public void A_bank_with_a_sound_of_an_unknown_layout_is_left_alone()
+        {
+            // a Sound whose layout the plugin does not read: a media swap could not keep its
+            // mem size true, so the bank is refused rather than half-repaired
+            GameNowWithAudio();
+            var officialRaw = Bank(Wwise, new[] { (7u, WemGame) }, new[] { (7u, 0, (uint?)null) }, 5);
+            var g = BitConverter.GetBytes(Banks.SoundGuard);
+            int at = officialRaw.Length - 4;
+            while (at >= 0 && !(officialRaw[at] == g[0] && officialRaw[at + 1] == g[1] && officialRaw[at + 2] == g[2] && officialRaw[at + 3] == g[3])) at--;
+            Assert.True(at >= 0);
+            officialRaw[at] = 0x99;                                         // the guard is gone: an unknown layout
+            GameRows((B1, GameBanks.Bank, GameBank(officialRaw)));
+            var archive = Archive((B1, GameBanks.Bank, ModBank(Bank(Wwise - 1, new[] { (7u, WemMod) }, new[] { (7u, 0, (uint?)null) }), B1)));
+            var dir = AddMod("Unknown", ("9ba626afa44a3aa3.patch_0", archive));
+            var done = Repairs.Repair(Home, dir, Units(), Data);
+            Assert.Equal(0, done.Files);
+            Assert.Contains("does not know", string.Join("\n", done.Refused));
+            Assert.Equal(archive, File.ReadAllBytes(Path.Combine(dir, "9ba626afa44a3aa3.patch_0")));
+        }
+
+        [Fact]
+        public void A_bank_whose_HIRC_header_is_truncated_is_refused()
+        {
+            var b = new List<byte>();
+            b.AddRange(Encoding.ASCII.GetBytes("BKHD"));
+            b.AddRange(BitConverter.GetBytes(40u));
+            b.AddRange(new byte[40]);
+            b.AddRange(Encoding.ASCII.GetBytes("HIRC"));
+            b.AddRange(BitConverter.GetBytes(2u));
+            b.AddRange(new byte[] { 1, 0 });
+            Assert.Throws<InvalidDataException>(() => Banks.Parse(b.ToArray()));
+        }
+
+        [Fact]
+        public void A_table_whose_text_offset_points_into_its_header_is_refused()
+        {
+            var raw = Table(1, Lang, (1u, "a"), (2u, "b"));
+            BitConverter.GetBytes(4u).CopyTo(raw, 24);                      // the first text's offset: into the header
+            Assert.Throws<InvalidDataException>(() => Subtitles.Parse(raw));
         }
 
         [Fact]

@@ -226,7 +226,11 @@ namespace Hd2Qd.Repatch
                 finally { busy = false; }
                 int fixed_ = results.Where(r => r.Done != null).Sum(r => r.Done.Models + r.Done.Banks + r.Done.Tables);
                 var failed = results.Where(r => r.Error != null || r.Done.Refused.Count > 0).ToList();
+                var notes = results.Where(r => r.Done != null && r.Done.Notes.Count > 0)
+                    .SelectMany(r => r.Done.Notes.Select(n => r.Name + ": " + n)).ToList();
                 Changed(T("repaired", fixed_));
+                if (notes.Count > 0)
+                    Tell(string.Join("\n", notes));                 // a bank that fell back to the game's own
                 if (failed.Count > 0)
                     Tell(T("repair_failed") + string.Join("\n", failed.Select(r =>
                         r.Name + ": " + (r.Error ?? string.Join("; ", r.Done.Refused)) +
