@@ -42,15 +42,17 @@ namespace Hd2Qd.Repatch
             ((Func<List<Dictionary<string, object>>>)host["library"])()
                 .Select(m => ((string)m["name"], (string)m["path"], m.TryGetValue("enabled", out var e) && e is bool b && b)).ToList();
 
-        /// <summary>Reads the game's models once in the background when the window starts (about
-        /// two seconds; kept while the game is not updated). True when it read them, so the rows
-        /// show the notes.</summary>
+        /// <summary>Reads the game's models, and its banks and strings tables, once in the
+        /// background when the window starts (a few seconds; kept while the game is not
+        /// updated). True when it read the models, so the rows show the notes.</summary>
         public static bool Start(Dictionary<string, object> host)
         {
             var data = Data(host);
-            if (data == null || !File.Exists(Path.Combine(data, "bundles.nxa")) || GameUnits.Cached(Home(host), data) != null) return false;
+            if (data == null || !File.Exists(Path.Combine(data, "bundles.nxa"))) return false;
+            var loaded = GameUnits.Cached(Home(host), data) == null;
             GameUnits.Load(Home(host), data);
-            return true;
+            if (GameBanks.Cached(Home(host), data) == null) GameBanks.Load(Home(host), data);
+            return loaded;
         }
 
         /// <summary>A word on the row of a mod with resources made for an earlier version of the
@@ -98,7 +100,7 @@ namespace Hd2Qd.Repatch
             {
                 case "repatch-check":
                 {
-                    var mods = lib.Select(m => Repairs.Scan(home, m.Name, m.Path, m.Enabled, game, data)).ToList();
+                    var mods = Repairs.ScanAll(home, lib, game, data);
                     o.WriteLine("the game's models: version " + game.Latest);
                     var shown = mods.Where(m => Stale(m) + Newer(m) > 0 || m.Errors.Count > 0 || m.Undoable).ToList();
                     foreach (var m in shown)
@@ -113,7 +115,7 @@ namespace Hd2Qd.Repatch
                 {
                     if (args.Length == 0) return 2;
                     var targets = args.Contains("--all")
-                        ? lib.Where(m => Stale(Repairs.Scan(home, m.Name, m.Path, m.Enabled, game, data)) > 0).ToList()
+                        ? Repairs.ScanAll(home, lib, game, data).Where(m => Stale(m) > 0).Select(m => (m.Name, m.Path, true)).ToList()
                         : args.Select(a => Find(lib, a)).ToList();
                     if (targets.Count == 0) { o.WriteLine("no mod needs a repair"); return 0; }
                     foreach (var m in targets)

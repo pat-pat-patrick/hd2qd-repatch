@@ -77,7 +77,7 @@ namespace Hd2Qd.Repatch
                     mods = await Task.Run(() =>
                     {
                         var game = GameUnits.Load(home, data);
-                        return Library(host).Select(m => Repairs.Scan(home, m.Name, m.Path, m.Enabled, game, data)).ToList();
+                        return Repairs.ScanAll(home, Library(host), game, data);
                     });
                 }
                 catch (Exception e)

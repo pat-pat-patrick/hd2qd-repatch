@@ -4,6 +4,7 @@ using System.IO;
 using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
+using System.Threading.Tasks;
 
 namespace Hd2Qd.Repatch
 {
@@ -33,6 +34,16 @@ namespace Hd2Qd.Repatch
         static readonly Dictionary<string, (long Len, long Time, GameUnits Game, GameBanks Banks, Patches.Scan Scan)> scans =
             new Dictionary<string, (long, long, GameUnits, GameBanks, Patches.Scan)>(StringComparer.OrdinalIgnoreCase);
 
+        /// <summary>Scans the library's mods, a few at once: the compare with the game's banks is
+        /// the slow part of a first check, and it runs on several threads inside each scan too.
+        /// The order is the library's.</summary>
+        public static List<Mod> ScanAll(string home, List<(string Name, string Path, bool Enabled)> lib, GameUnits game, string data)
+        {
+            var mods = new Mod[lib.Count];
+            Parallel.For(0, lib.Count, i => mods[i] = Scan(home, lib[i].Name, lib[i].Path, lib[i].Enabled, game, data));
+            return mods.ToList();
+        }
+
         /// <summary>A mod's state; each archive read again only when it, the game or the game's
         /// bank index changed.</summary>
         public static Mod Scan(string home, string name, string path, bool enabled, GameUnits game, string data)
@@ -49,7 +60,7 @@ namespace Hd2Qd.Repatch
                         s = c.Scan;
                     else scans[f] = (fi.Length, fi.LastWriteTimeUtc.Ticks, game, banks, s = Patches.Check(f, game, banks));
                 }
-                if (s.NeedsBanks && banks == null)
+                if (s.NeedsBanks && banks == null && data != null)
                 {
                     banks = GameBanks.Load(home, data);
                     lock (gate) scans[f] = (fi.Length, fi.LastWriteTimeUtc.Ticks, game, banks, s = Patches.Check(f, game, banks));

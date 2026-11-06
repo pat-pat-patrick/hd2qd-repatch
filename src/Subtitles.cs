@@ -43,7 +43,7 @@ namespace Hd2Qd.Repatch
                 if (off >= b.Length) throw new InvalidDataException("a text of the strings table lies outside it");
                 int end = Array.IndexOf(b, (byte)0, (int)off);
                 if (end < 0) throw new InvalidDataException("a text of the strings table does not end");
-                t.Texts[i] = b.Skip((int)off).Take(end - (int)off).ToArray();
+                t.Texts[i] = Slice(b, (int)off, end - (int)off);
             }
             return t;
         }
@@ -146,6 +146,13 @@ namespace Hd2Qd.Repatch
         {
             for (int i = 0; i < mine.Ids.Length; i++) if (mine.Ids[i] == id) return mine.Texts[i];
             return null;
+        }
+
+        static byte[] Slice(byte[] b, int at, int len)
+        {
+            var t = new byte[len];
+            Buffer.BlockCopy(b, at, t, 0, len);
+            return t;
         }
 
         static bool TextsEqual(byte[] a, byte[] b) => a != null && b != null && a.SequenceEqual(b);

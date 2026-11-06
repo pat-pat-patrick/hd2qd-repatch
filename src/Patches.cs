@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text.RegularExpressions;
+using System.Threading.Tasks;
 
 namespace Hd2Qd.Repatch
 {
@@ -89,7 +90,9 @@ namespace Hd2Qd.Repatch
         }
 
         /// <summary>Reads the header, and each model's version (cheap) or each bank's and table's
-        /// bytes (bigger, but only for mods that carry them).</summary>
+        /// bytes (bigger, but only for mods that carry them). The bytes come off the file one
+        /// after another; the compare with the game's own copy, which is the slow part (a parse
+        /// and a read of the game's bank), runs on a few threads at once.</summary>
         public static Scan Check(string path, GameUnits game, GameBanks banks)
         {
             var s = new Scan { Path = path };
@@ -113,6 +116,7 @@ namespace Hd2Qd.Repatch
                     var rows = new byte[fc * 80];
                     if (f.Read(rows, 0, rows.Length) < rows.Length) { s.Error = "the archive's header is damaged"; return s; }
                     var v = new byte[4];
+                    var targets = new List<(ulong Id, ulong Off, uint Size, bool Bank)>();
                     for (int i = 0; i < fc; i++)
                     {
                         int o = i * 80;
@@ -132,38 +136,62 @@ namespace Hd2Qd.Repatch
                         }
                         else if (ty == GameBanks.Bank || ty == GameBanks.Table)
                         {
-                            bool bank = ty == GameBanks.Bank;
-                            if (bank) s.Banks++; else s.Tables++;
+                            if (ty == GameBanks.Bank) s.Banks++; else s.Tables++;
                             if (banks == null) { s.NeedsBanks = true; continue; }
-                            if (size < 4 || off + size > (ulong)f.Length) { s.Error = (bank ? "a bank" : "a strings table") + " lies outside the archive"; continue; }
-                            var bytes = new byte[size];
-                            f.Seek((long)off, SeekOrigin.Begin);
-                            if (f.Read(bytes, 0, bytes.Length) < bytes.Length) { s.Error = (bank ? "a bank" : "a strings table") + " lies outside the archive"; continue; }
-                            if (bank)
-                            {
-                                if (!banks.BankRows.ContainsKey(id)) { s.Added++; continue; }        // the mod's own bank
-                                Banks.BankFile mine;
-                                try { mine = Banks.Parse(Banks.Unwrap(bytes, id).Raw); }
-                                catch (InvalidDataException e) { s.Error = e.Message; continue; }
-                                var official = banks.OfficialBank(id);
-                                if (official == null) { s.Error = "the game's own bank of " + id.ToString("x16") + " cannot be read"; continue; }
-                                var n = Banks.Judge(mine, official);
-                                if (n == Need.Update) s.BankUpdate++;
-                                else if (n == Need.Newer) s.BankNewer++;
-                            }
-                            else
-                            {
-                                if (!banks.Tables.ContainsKey(id)) { s.Added++; continue; }          // the mod's own table
-                                Subtitles.Table mine;
-                                try { mine = Subtitles.Parse(bytes); }
-                                catch (InvalidDataException e) { s.Error = e.Message; continue; }
-                                var official = banks.OfficialTable(id);
-                                if (official == null) { s.Error = "the game's own strings table of " + id.ToString("x16") + " cannot be read"; continue; }
-                                var n = Subtitles.Judge(mine, official);
-                                if (n == Need.Update) s.TableUpdate++;
-                                else if (n == Need.Newer) s.TableNewer++;
-                            }
+                            if (size < 4 || off + size > (ulong)f.Length) { s.Error = (ty == GameBanks.Bank ? "a bank" : "a strings table") + " lies outside the archive"; continue; }
+                            targets.Add((id, off, size, ty == GameBanks.Bank));
                         }
+                    }
+
+                    var bodies = new byte[targets.Count][];
+                    var errors = new string[targets.Count];
+                    var verdict = new byte[targets.Count];               // 0 none, 1 update, 2 newer, 3 added
+                    using (var f2 = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, 4096))
+                        for (int i = 0; i < targets.Count; i++)
+                        {
+                            var t = targets[i];
+                            var bytes = new byte[t.Size];
+                            f2.Seek((long)t.Off, SeekOrigin.Begin);
+                            if (f2.Read(bytes, 0, bytes.Length) < bytes.Length) { errors[i] = (t.Bank ? "a bank" : "a strings table") + " lies outside the archive"; bodies[i] = null; }
+                            else bodies[i] = bytes;
+                        }
+                    Parallel.For(0, targets.Count, new ParallelOptions { MaxDegreeOfParallelism = 4 }, i =>
+                    {
+                        if (bodies[i] == null) return;
+                        var t = targets[i];
+                        if (t.Bank)
+                        {
+                            if (!banks.BankRows.ContainsKey(t.Id)) { verdict[i] = 3; return; }       // the mod's own bank
+                            Banks.BankFile mine;
+                            try { mine = Banks.Info(Banks.Unwrap(bodies[i], t.Id).Raw); }
+                            catch (InvalidDataException e) { errors[i] = e.Message; return; }
+                            var official = banks.OfficialBank(t.Id);
+                            if (official == null) { errors[i] = "the game's own bank of " + t.Id.ToString("x16") + " cannot be read"; return; }
+                            var n = Banks.Judge(mine, official);
+                            if (n == Need.Update) verdict[i] = 1;
+                            else if (n == Need.Newer) verdict[i] = 2;
+                        }
+                        else
+                        {
+                            if (!banks.Tables.ContainsKey(t.Id)) { verdict[i] = 3; return; }         // the mod's own table
+                            Subtitles.Table mine;
+                            try { mine = Subtitles.Parse(bodies[i]); }
+                            catch (InvalidDataException e) { errors[i] = e.Message; return; }
+                            var official = banks.OfficialTable(t.Id);
+                            if (official == null) { errors[i] = "the game's own strings table of " + t.Id.ToString("x16") + " cannot be read"; return; }
+                            var n = Subtitles.Judge(mine, official);
+                            if (n == Need.Update) verdict[i] = 1;
+                            else if (n == Need.Newer) verdict[i] = 2;
+                        }
+                    });
+                    for (int i = 0; i < targets.Count; i++)
+                    {
+                        if (verdict[i] == 1 && targets[i].Bank) s.BankUpdate++;
+                        else if (verdict[i] == 1) s.TableUpdate++;
+                        else if (verdict[i] == 2 && targets[i].Bank) s.BankNewer++;
+                        else if (verdict[i] == 2) s.TableNewer++;
+                        else if (verdict[i] == 3) s.Added++;
+                        if (errors[i] != null && s.Error == null) s.Error = errors[i];
                     }
                 }
             }

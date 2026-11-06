@@ -4,6 +4,7 @@ using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Threading.Tasks;
 using Hd2Qd.Repatch;
 using Xunit;
 
@@ -559,7 +560,7 @@ namespace Hd2Qd.Repatch.Tests
             var bank = Parsed(Body(file, B1), B1);
             Assert.Equal(Wwise, bank.Version);
             Assert.Contains(5u, bank.Entries);                          // the game's event is there
-            Assert.Equal(WemMod, bank.Media[7u]);                       // the mod's media is back
+            Assert.Equal(WemMod, bank.MediaBytes(7u));                  // the mod's media is back
             var s = bank.Sounds.Single(x => x.Source == 7u);
             Assert.Equal((uint)WemMod.Length, s.MemSize);
             var table = Subtitles.Parse(Body(file, T1));
@@ -656,6 +657,24 @@ namespace Hd2Qd.Repatch.Tests
             var back = Subtitles.Parse(merged);
             Assert.Equal(new uint[] { 1, 2, 3 }, back.Ids);
             Assert.Equal(new[] { "a", "b", "b" }, back.Texts.Select(x => Encoding.UTF8.GetString(x)));
+        }
+
+        [Fact]
+        public void Two_checks_at_once_agree_and_do_not_trip_over_each_other()
+        {
+            // the window can be opened again while the first check is still running
+            GameNowWithAudio();
+            var dir = AddMod("Audio", ("9ba626afa44a3aa3.patch_0", AudioArchive()));
+            var results = new Repairs.Mod[4];
+            Parallel.For(0, 4, i => results[i] = Repairs.Scan(Home, "Audio", dir, true, Units(), Data));
+            foreach (var m in results)
+            {
+                Assert.Equal(1, m.Banks);
+                Assert.Equal(1, m.BankUpdate);
+                Assert.Equal(1, m.Tables);
+                Assert.Equal(1, m.TableUpdate);
+                Assert.Empty(m.Errors);
+            }
         }
 
         [Fact]
