@@ -11,8 +11,8 @@
     <Nullable>disable</Nullable>
     <AssemblyName>HD2QD.Repatch</AssemblyName>
     <RootNamespace>Hd2Qd.Repatch</RootNamespace>
-    <Version>1.1.0</Version>
-    <Product>HD2QD Model Repair</Product>
+    <Version>1.2.0</Version>
+    <Product>HD2QD Repair</Product>
     <Company>pat-pat-patrick</Company>
     <Copyright>MIT License</Copyright>
     <Deterministic>true</Deterministic>

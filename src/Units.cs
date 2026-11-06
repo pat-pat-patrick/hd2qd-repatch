@@ -156,7 +156,7 @@ namespace Hd2Qd.Repatch
         static readonly object gate = new object();
         static (long Stamp, string Data, GameUnits Units) held;
 
-        static long Stamp(string data)
+        internal static long Stamp(string data)
         {
             var index = new FileInfo(Path.Combine(data, "bundles.nxa"));
             if (!index.Exists) throw new FileNotFoundException("bundles.nxa is not in " + data + ": this plugin reads the game as it has been packed since 2025");
