@@ -239,6 +239,11 @@ namespace Hd2Qd.Repatch
                 }
                 else
                 {
+                    if (banks == null)                                          // the index was never built (a locked
+                    {                                                           // archive hid the rows from Needed)
+                        res.Refused.Add(r.Id.ToString("x16") + ": the game's banks and tables are not read yet; check again");
+                        continue;
+                    }
                     var resource = new byte[r.Size];
                     Buffer.BlockCopy(toc, (int)r.Off, resource, 0, resource.Length);
                     bytes = r.Type == GameBanks.Bank ? Banks.Repair(resource, r.Id, banks, res) : Subtitles.Repair(resource, r.Id, banks, res);

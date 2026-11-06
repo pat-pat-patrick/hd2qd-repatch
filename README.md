@@ -113,7 +113,7 @@ The repair follows three earlier tools, written again here in C#:
 
 1. 在 HD2 Mod Quick Deploy 中打开“插件”页（齿轮旁的拼图按钮）。
 2. 点击“添加插件…”，选择 `HD2QD.Repatch.dll`，或将该文件拖到插件页上。
-3. 资源需要更新的 MOD 会在 MOD 列表中显示“需修复”，并注明类别（模型、音库、字幕）。在插件
+3. 资源需要更新的 MOD 会在 MOD 列表中显示“需更新”，并注明类别（模型、音库、字幕）。在插件
    卡片上点击“打开”，再点击“修复”（或“全部修复”），然后重新部署。
 
 命令行：`hd2qd repatch-check`、`hd2qd repatch <MOD>…` 或 `hd2qd repatch --all`，以及

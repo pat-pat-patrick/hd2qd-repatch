@@ -57,14 +57,19 @@ namespace Hd2Qd.Repatch
                 var fi = new FileInfo(f);
                 lock (gate)
                 {
-                    if (scans.TryGetValue(f, out var c) && c.Len == fi.Length && c.Time == fi.LastWriteTimeUtc.Ticks && c.Game == game && c.Banks == banks)
-                        s = c.Scan;
-                    else scans[f] = (fi.Length, fi.LastWriteTimeUtc.Ticks, game, banks, s = Patches.Check(f, game, banks));
+                    s = scans.TryGetValue(f, out var c) && c.Len == fi.Length && c.Time == fi.LastWriteTimeUtc.Ticks && c.Game == game && c.Banks == banks
+                        ? c.Scan
+                        : null;
                 }
-                if (s.NeedsBanks && banks == null && data != null && !cachedBanksOnly)
-                {
-                    banks = GameBanks.Load(home, data);
-                    lock (gate) scans[f] = (fi.Length, fi.LastWriteTimeUtc.Ticks, game, banks, s = Patches.Check(f, game, banks));
+                if (s == null)                                                  // the compare runs outside the lock: it is
+                {                                                               // the slow part, and one scan must not hold
+                    s = Patches.Check(f, game, banks);                          // up the others or the row notes
+                    if (s.NeedsBanks && banks == null && data != null && !cachedBanksOnly)
+                    {
+                        banks = GameBanks.Load(home, data);
+                        s = Patches.Check(f, game, banks);
+                    }
+                    lock (gate) scans[f] = (fi.Length, fi.LastWriteTimeUtc.Ticks, game, banks, s);
                 }
                 m.Models += s.Models; m.Update += s.Update; m.Newer += s.Newer; m.Added += s.Added;
                 m.Banks += s.Banks; m.BankUpdate += s.BankUpdate; m.BankNewer += s.BankNewer;

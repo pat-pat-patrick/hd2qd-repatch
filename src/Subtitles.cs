@@ -96,15 +96,14 @@ namespace Hd2Qd.Repatch
         public static byte[] Write(uint version, uint language, uint[] ids, byte[][] texts)
         {
             if (ids.Length != texts.Length) throw new InvalidDataException("a table of " + ids.Length + " entries got " + texts.Length + " texts");
-            var seen = new Dictionary<string, int>();                 // a text -> its offset, shared
+            var seen = new Dictionary<byte[], int>(ByteTextComparer.Default);   // a text -> its offset, by its bytes
             var blob = new List<byte>();
             var offs = new int[ids.Length];
             for (int i = 0; i < ids.Length; i++)
             {
-                var key = Encoding.UTF8.GetString(texts[i]);
-                if (!seen.TryGetValue(key, out int at))
+                if (!seen.TryGetValue(texts[i], out int at))
                 {
-                    at = blob.Count; seen[key] = at;
+                    at = blob.Count; seen[texts[i]] = at;
                     blob.AddRange(texts[i]); blob.Add(0);
                 }
                 offs[i] = at;
@@ -154,6 +153,15 @@ namespace Hd2Qd.Repatch
             catch (InvalidDataException e) { res.Refused.Add(fileId.ToString("x16") + ": " + e.Message); return null; }
             res.Tables++;
             return fresh;
+        }
+
+        /// <summary>Texts by their bytes: two invalid-UTF-8 texts can decode to the same string,
+        /// and one of them must not silently replace the other.</summary>
+        sealed class ByteTextComparer : IEqualityComparer<byte[]>
+        {
+            public static readonly ByteTextComparer Default = new ByteTextComparer();
+            public bool Equals(byte[] a, byte[] b) => a != null && b != null && a.Length == b.Length && a.SequenceEqual(b);
+            public int GetHashCode(byte[] b) { unchecked { int h = 17; foreach (var x in b) h = h * 31 + x; return h; } }
         }
 
         static byte[] Slice(byte[] b, int at, int len)

@@ -479,15 +479,34 @@ namespace Hd2Qd.Repatch.Tests
                 data.AddRange(wem);
             }
             var b = new List<byte>();
-            void Chunk(string tag, byte[] bytes)
+            b.AddRange(Chunk("BKHD", bkhd));
+            if (media.Length > 0) { b.AddRange(Chunk("DIDX", didx.ToArray())); b.AddRange(Chunk("DATA", data.ToArray())); }
+            b.AddRange(Chunk("HIRC", hirc.ToArray()));
+            return b.ToArray();
+        }
+
+        /// <summary>A bank's chunks by their tag, for a test that reorders or replaces them.</summary>
+        static Dictionary<string, byte[]> BankParts(byte[] bank)
+        {
+            var parts = new Dictionary<string, byte[]>();
+            int at = 0;
+            while (at + 8 <= bank.Length)
             {
-                b.AddRange(Encoding.ASCII.GetBytes(tag));
-                b.AddRange(BitConverter.GetBytes((uint)bytes.Length));
-                b.AddRange(bytes);
+                var tag = Encoding.ASCII.GetString(bank, at, 4);
+                int size = BitConverter.ToInt32(bank, at + 4);
+                parts[tag] = bank.Skip(at + 8).Take(size).ToArray();
+                at += 8 + size;
             }
-            Chunk("BKHD", bkhd);
-            if (media.Length > 0) { Chunk("DIDX", didx.ToArray()); Chunk("DATA", data.ToArray()); }
-            Chunk("HIRC", hirc.ToArray());
+            return parts;
+        }
+
+        /// <summary>One chunk's bytes: the tag, the length, the body.</summary>
+        static byte[] Chunk(string tag, byte[] body)
+        {
+            var b = new List<byte>();
+            b.AddRange(Encoding.ASCII.GetBytes(tag));
+            b.AddRange(BitConverter.GetBytes((uint)body.Length));
+            b.AddRange(body);
             return b.ToArray();
         }
 
@@ -536,10 +555,12 @@ namespace Hd2Qd.Repatch.Tests
         }
 
         /// <summary>The mod of the audio tests: its bank is from before the game's (no event 5,
-        /// its own media bytes), its table lacks the game's entry 3 and rewords the others.</summary>
+        /// its own media bytes), its table lacks the game's entry 3 and rewords the others, and a
+        /// material follows them both, whose bytes must survive a repair that resizes the bank.</summary>
         byte[] AudioArchive() => Archive(
             (B1, GameBanks.Bank, ModBank(Bank(Wwise - 1, new[] { (7u, WemMod) }, new[] { (7u, 0, (uint?)null) }), B1)),
-            (T1, GameBanks.Table, Table(1, Lang, (1u, "A"), (2u, "B"))));
+            (T1, GameBanks.Table, Table(1, Lang, (1u, "A"), (2u, "B"))),
+            (M1, Material, Mat));
 
         [Fact]
         public void A_stale_bank_and_table_are_flagged_repaired_and_can_be_undone()
@@ -563,6 +584,7 @@ namespace Hd2Qd.Repatch.Tests
             Assert.Equal(WemMod, bank.MediaBytes(7u));                  // the mod's media is back
             var s = bank.Sounds.Single(x => x.Source == 7u);
             Assert.Equal((uint)WemMod.Length, s.MemSize);
+            Assert.Equal(Mat, Body(file, M1));                              // the material after a resized bank keeps its bytes
             var table = Subtitles.Parse(Body(file, T1));
             Assert.Equal(1u, table.Version);                            // the game's version and language
             Assert.Equal(Lang, table.Language);
@@ -777,6 +799,121 @@ namespace Hd2Qd.Repatch.Tests
             b.AddRange(BitConverter.GetBytes(40u));
             b.AddRange(new byte[40]);
             Assert.Throws<InvalidDataException>(() => Banks.Parse(b.ToArray()));
+        }
+
+        [Fact]
+        public void A_sound_too_small_for_a_source_is_counted_and_does_not_crash_the_read()
+        {
+            var b = new List<byte>();
+            b.AddRange(Encoding.ASCII.GetBytes("BKHD"));
+            b.AddRange(BitConverter.GetBytes(40u));
+            b.AddRange(new byte[40]);
+            b.AddRange(Encoding.ASCII.GetBytes("HIRC"));
+            b.AddRange(BitConverter.GetBytes(18u));                         // count + one entry of nine bytes
+            b.AddRange(BitConverter.GetBytes(1u));
+            b.AddRange(new byte[] { 2 });
+            b.AddRange(BitConverter.GetBytes(9u));
+            b.AddRange(BitConverter.GetBytes(77u));
+            b.AddRange(new byte[] { 1, 2, 3, 4, 5 });
+            var f = Banks.Parse(b.ToArray());                               // its last read must stay inside the entry
+            Assert.Equal(1, f.UnknownSounds);
+            Assert.Empty(f.UnknownSources);
+        }
+
+        [Fact]
+        public void A_repair_without_the_bank_index_leaves_the_bank_and_says_so()
+        {
+            GameNowWithAudio();
+            var archive = Archive((B1, GameBanks.Bank, ModBank(Bank(Wwise - 1, new[] { (7u, WemMod) }, new[] { (7u, 0, (uint?)null) }), B1)));
+            var res = new Patches.Result();
+            var fresh = Patches.Update(archive, Units(), null, res);        // the index was never built
+            Assert.Null(fresh);
+            Assert.Contains(res.Refused, r => r.Contains("not read"));
+        }
+
+        [Fact]
+        public void A_bank_whose_DATA_precedes_its_DIDX_is_still_rebuilt()
+        {
+            var parts = BankParts(Bank(Wwise, new[] { (7u, WemGame) }, new[] { (7u, 0, (uint?)null) }, 5));
+            var officialRaw = Chunk("BKHD", parts["BKHD"]).Concat(Chunk("DATA", parts["DATA"]))
+                .Concat(Chunk("DIDX", parts["DIDX"])).Concat(Chunk("HIRC", parts["HIRC"])).ToArray();
+            GameRows((B1, GameBanks.Bank, GameBank(officialRaw)));
+            var archive = Archive((B1, GameBanks.Bank, ModBank(Bank(Wwise - 1, new[] { (7u, WemMod) }, new[] { (7u, 0, (uint?)null) }, 5), B1)));
+            var dir = AddMod("Reordered", ("9ba626afa44a3aa3.patch_0", archive));
+            var done = Repairs.Repair(Home, dir, Units(), Data);
+            Assert.Equal(1, done.Banks);
+            var bank = Parsed(Body(File.ReadAllBytes(Path.Combine(dir, "9ba626afa44a3aa3.patch_0")), B1), B1);
+            Assert.Equal(WemMod, bank.MediaBytes(7u));
+        }
+
+        [Fact]
+        public void A_stream_only_bank_gets_the_games_structure_and_keeps_its_stream_sizes()
+        {
+            GameRows((B1, GameBanks.Bank, GameBank(Bank(Wwise, Array.Empty<(uint, byte[])>(), new (uint, int, uint?)[] { (7u, 2, 123u) }, 5))));
+            var archive = Archive((B1, GameBanks.Bank, ModBank(Bank(Wwise - 1, Array.Empty<(uint, byte[])>(), new (uint, int, uint?)[] { (7u, 2, 123u) }), B1)));
+            var dir = AddMod("Streamed", ("9ba626afa44a3aa3.patch_0", archive));
+            var done = Repairs.Repair(Home, dir, Units(), Data);
+            Assert.Equal(1, done.Banks);
+            var bank = Parsed(Body(File.ReadAllBytes(Path.Combine(dir, "9ba626afa44a3aa3.patch_0")), B1), B1);
+            Assert.Equal(Wwise, bank.Version);
+            Assert.Contains(5u, bank.Entries);                              // the game's event is in
+            Assert.Empty(bank.Media);                                       // nothing embedded, nothing written
+            Assert.Equal(123u, bank.Sounds.Single().MemSize);               // a streamed sound's size is never touched
+        }
+
+        [Fact]
+        public void A_bank_whose_DIDX_holds_no_entries_keeps_its_empty_chunks()
+        {
+            // none of the game's 426 banks on 2026-11-07 carries a DIDX with no entries, but one
+            // could (a bank of only streamed sounds): its empty pair is rebuilt, not crashed on
+            var parts = BankParts(Bank(Wwise, Array.Empty<(uint, byte[])>(), new (uint, int, uint?)[] { (7u, 2, 123u) }, 5));
+            var officialRaw = Chunk("BKHD", parts["BKHD"]).Concat(Chunk("DIDX", new byte[0]))
+                .Concat(Chunk("DATA", new byte[0])).Concat(Chunk("HIRC", parts["HIRC"])).ToArray();
+            GameRows((B1, GameBanks.Bank, GameBank(officialRaw)));
+            var archive = Archive((B1, GameBanks.Bank, ModBank(Bank(Wwise - 1, Array.Empty<(uint, byte[])>(), new (uint, int, uint?)[] { (7u, 2, 123u) }), B1)));
+            var dir = AddMod("EmptyDidx", ("9ba626afa44a3aa3.patch_0", archive));
+            var m = Repairs.Scan(Home, "EmptyDidx", dir, true, Units(), Data);
+            Assert.Equal(1, m.BankUpdate);
+            var done = Repairs.Repair(Home, dir, Units(), Data);
+            Assert.Equal(1, done.Banks);
+            var bank = Parsed(Body(File.ReadAllBytes(Path.Combine(dir, "9ba626afa44a3aa3.patch_0")), B1), B1);
+            Assert.Equal(Wwise, bank.Version);
+            Assert.Contains(5u, bank.Entries);
+            Assert.Empty(bank.Media);
+            Assert.Contains(bank.Chunks, c => c.Tag == "DIDX" && c.Len == 0);   // the empty pair survives the rebuild
+            Assert.Contains(bank.Chunks, c => c.Tag == "DATA" && c.Len == 0);
+            Assert.Equal(123u, bank.Sounds.Single().MemSize);                   // a streamed sound's size is never touched
+        }
+
+        [Fact]
+        public void A_media_only_the_mod_has_is_dropped()
+        {
+            GameNowWithAudio();
+            var archive = Archive((B1, GameBanks.Bank, ModBank(Bank(Wwise - 1,
+                new[] { (7u, WemMod), (99u, WemGame) }, new[] { (7u, 0, (uint?)null) }), B1)));
+            var dir = AddMod("Added", ("9ba626afa44a3aa3.patch_0", archive));
+            Repairs.Repair(Home, dir, Units(), Data);
+            var bank = Parsed(Body(File.ReadAllBytes(Path.Combine(dir, "9ba626afa44a3aa3.patch_0")), B1), B1);
+            Assert.Equal(1, bank.Media.Count);                              // the game's objects do not name media 99
+            Assert.Equal(WemMod, bank.MediaBytes(7u));
+        }
+
+        [Fact]
+        public void A_bank_that_cannot_read_back_falls_back_to_the_games_own()
+        {
+            // an embedded Sound naming a media the bank does not carry: the rebuild keeps that
+            // hole, so the read-back refuses and the game's own bank takes its place
+            GameNowWithAudio();
+            var officialRaw = Bank(Wwise, new[] { (8u, WemGame) }, new (uint, int, uint?)[] { (7u, 0, 10u) }, 5);
+            GameRows((B1, GameBanks.Bank, GameBank(officialRaw)));
+            var archive = Archive((B1, GameBanks.Bank, ModBank(Bank(Wwise - 1, new[] { (8u, WemMod) }, new (uint, int, uint?)[] { (7u, 0, 10u) }), B1)));
+            var dir = AddMod("Holed", ("9ba626afa44a3aa3.patch_0", archive));
+            var done = Repairs.Repair(Home, dir, Units(), Data);
+            Assert.Equal(1, done.Banks);
+            Assert.Contains(done.Notes, n => n.Contains("did not verify"));
+            var bank = Parsed(Body(File.ReadAllBytes(Path.Combine(dir, "9ba626afa44a3aa3.patch_0")), B1), B1);
+            Assert.Equal(Wwise, bank.Version);                              // the game's own bank, in the mod's block
+            Assert.Equal(WemGame, bank.MediaBytes(8u));
         }
 
         [Fact]

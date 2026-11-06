@@ -183,7 +183,7 @@ namespace Hd2Qd.Repatch
                             MemSize = BitConverter.ToUInt32(raw, body + 13),
                             MemAt = body + 13 - f.HircAt,                    // where it sits in the HIRC chunk's bytes
                         });
-                    else if (size >= 9) f.UnknownSources.Add(BitConverter.ToUInt32(raw, body + 5));
+                    else if (size >= 13) f.UnknownSources.Add(BitConverter.ToUInt32(raw, body + 5));
                     else f.UnknownSounds++;                                  // too small to even read a source from
                 }
                 q += 5 + size;
@@ -226,13 +226,15 @@ namespace Hd2Qd.Repatch
             if ((game.UnknownSounds > 0 && changed.Count > 0) || changed.Keys.Any(game.UnknownSources.Contains))
                 throw new UnknownSoundException("the bank has a Sound of a layout this plugin does not know that names one of the replaced media, so it is left as it is");
 
-            byte[] data = null;                                          // the rebuilt DIDX's DATA, for the DATA chunk
+            byte[] didx = null, data = null;                             // the rebuilt media index and bytes, built once
+            if (game.Media.Count > 0 || game.Chunks.Any(c => c.Tag == "DIDX" || c.Tag == "DATA"))
+                didx = Didx(game, changed, out data);                    // a bank whose DIDX holds no entries keeps its chunks
             using (var o = new MemoryStream())
             {
                 foreach (var (tag, at, len) in game.Chunks)
                 {
                     byte[] bytes;
-                    if (tag == "DIDX") bytes = Didx(game, changed, out data);
+                    if (tag == "DIDX") bytes = didx;
                     else if (tag == "DATA") bytes = data;
                     else if (tag == "HIRC") bytes = hirc;
                     else bytes = game.Slice(at, len);
@@ -292,8 +294,6 @@ namespace Hd2Qd.Repatch
             var need = Judge(mine, official);
             if (need == Need.None) return null;
             if (need == Need.Newer) { res.Refused.Add(fileId.ToString("x16") + ": the bank was made for a newer version of the game"); return null; }
-            if (official.UnknownSounds > 0 || mine.UnknownSounds > 0)
-            { res.Refused.Add(fileId.ToString("x16") + ": the bank has a Sound of a layout this plugin does not know, so it is left as it is"); return null; }
             var officialRaw = game.ReadBank(fileId);
             if (officialRaw == null) { res.Refused.Add(fileId.ToString("x16") + ": the game's own bank cannot be read"); return null; }
             try
@@ -342,6 +342,7 @@ namespace Hd2Qd.Repatch
         readonly List<ulong> bankOrder = new List<ulong>();          // oldest first, to drop when the cache is full
         readonly List<ulong> tableOrder = new List<ulong>();
         readonly HashSet<ulong> unreadable = new HashSet<ulong>();
+        readonly HashSet<ulong> unreadableTables = new HashSet<ulong>();
         Game game;                                                   // the walk's own reader, opened on demand
 
         /// <summary>A mod's archives hold a bank or a strings table, so a repair of it needs this
@@ -468,6 +469,8 @@ namespace Hd2Qd.Repatch
                 }
             }
             progress?.Invoke(1);
+            c.game.Dispose();                                            // the walk is done; the body reads rent their own
+            c.game = null;
             return c;
         }
 
@@ -532,6 +535,7 @@ namespace Hd2Qd.Repatch
             catch (InvalidDataException) { parsed = null; }
             lock (infoGate)
             {
+                if (bankInfo.TryGetValue(fid, out var f)) return f;           // another thread was first
                 if (parsed == null) { unreadable.Add(fid); return null; }
                 if (bankInfo.Count >= BankCacheLimit && bankOrder.Count > 0)
                 {
@@ -552,6 +556,7 @@ namespace Hd2Qd.Repatch
             lock (infoGate)
             {
                 if (tableInfo.TryGetValue(fid, out var t)) return t;
+                if (unreadableTables.Contains(fid)) return null;
             }
             if (!Tables.TryGetValue(fid, out var row)) return null;
             Subtitles.Table t2 = null;
@@ -562,10 +567,10 @@ namespace Hd2Qd.Repatch
             }
             catch (Exception e) when (e is InvalidDataException || e is IOException || e is ObjectDisposedException) { }
             finally { Free(g); }
-            if (t2 == null) return null;
             lock (infoGate)
             {
                 if (tableInfo.TryGetValue(fid, out var t)) return t;          // another thread was first
+                if (t2 == null) { unreadableTables.Add(fid); return null; }
                 if (tableInfo.Count >= TableCacheLimit && tableOrder.Count > 0)
                 {
                     var old = tableOrder[0];

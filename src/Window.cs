@@ -143,7 +143,7 @@ namespace Hd2Qd.Repatch
                 if (m.Update > 0) said.Add(T("row_outdated", m.Update));
                 if (m.BankUpdate > 0) said.Add(T("row_banks_outdated", m.BankUpdate));
                 if (m.TableUpdate > 0) said.Add(T("row_tables_outdated", m.TableUpdate));
-                return string.Join(" ", said);
+                return said.Count > 0 ? string.Join(" ", said) : T("row_repaired");
             }
 
             static readonly GridLength[] Columns = { new GridLength(1, GridUnitType.Star), new GridLength(120), new GridLength(1.3, GridUnitType.Star), new GridLength(110) };

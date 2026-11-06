@@ -49,9 +49,10 @@ namespace Hd2Qd.Repatch
         {
             var data = Data(host);
             if (data == null || !File.Exists(Path.Combine(data, "bundles.nxa"))) return false;
-            var loaded = GameUnits.Cached(Home(host), data) == null;
-            GameUnits.Load(Home(host), data);
-            if (GameBanks.Cached(Home(host), data) == null) GameBanks.Load(Home(host), data);
+            var home = Home(host);
+            var loaded = GameUnits.Cached(home, data) == null;
+            GameUnits.Load(home, data);
+            GameBanks.Load(home, data);            // each Load reads only what is not held or cached yet
             return loaded;
         }
 
@@ -101,7 +102,7 @@ namespace Hd2Qd.Repatch
                 case "repatch-check":
                 {
                     var mods = Repairs.ScanAll(home, lib, game, data);
-                    o.WriteLine("the game's models: version " + game.Latest);
+                    o.WriteLine("the game's models: version " + game.Latest + " (the check also covers sound banks and subtitle tables)");
                     var shown = mods.Where(m => Stale(m) + Newer(m) > 0 || m.Errors.Count > 0 || m.Undoable).ToList();
                     foreach (var m in shown)
                         o.WriteLine("  " + (Stale(m) > 0 ? "outdated" : Newer(m) > 0 ? "newer" : m.Errors.Count > 0 ? "unreadable" : "repaired").PadRight(11) +
