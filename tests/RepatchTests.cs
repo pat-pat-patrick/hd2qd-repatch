@@ -723,6 +723,63 @@ namespace Hd2Qd.Repatch.Tests
         }
 
         [Fact]
+        public void A_media_the_mod_kept_keeps_the_games_mem_size()
+        {
+            // the compare must look at the media's own bytes, not the rest of the bank: the
+            // game's banks carry mem sizes that differ from the media length, and a repair
+            // replaces only the media it really changed (2026-11-06, Copilot's review)
+            GameNowWithAudio();
+            var wemB = Enumerable.Range(0, 30).Select(i => (byte)(i + 3)).ToArray();
+            var wemB2 = Enumerable.Range(0, 50).Select(i => (byte)(i + 9)).ToArray();
+            GameRows(
+                (U1, Unit, Model(Now, GameLod, 2, 30)), (U2, Unit, Model(Now, GameLod, 2)),
+                (B1, GameBanks.Bank, GameBank(Bank(Wwise, new[] { (7u, WemGame), (8u, wemB) },
+                    new[] { (7u, 0, (uint)(WemGame.Length + 7)), (8u, 0, (uint?)null) }, 5))));
+            var archive = Archive((B1, GameBanks.Bank, ModBank(Bank(Wwise - 1,
+                new[] { (7u, WemGame), (8u, wemB2) }, new[] { (7u, 0, (uint)(WemGame.Length + 7)), (8u, 0, (uint?)null) }), B1)));
+            var dir = AddMod("Kept", ("9ba626afa44a3aa3.patch_0", archive));
+            var done = Repairs.Repair(Home, dir, Units(), Data);
+            Assert.Equal(1, done.Banks);
+            var bank = Parsed(Body(File.ReadAllBytes(Path.Combine(dir, "9ba626afa44a3aa3.patch_0")), B1), B1);
+            Assert.Equal((uint)(WemGame.Length + 7), bank.Sounds.Single(s => s.Source == 7u).MemSize);   // unchanged: the game's size stays
+            Assert.Equal(WemGame, bank.MediaBytes(7u));
+            Assert.Equal((uint)wemB2.Length, bank.Sounds.Single(s => s.Source == 8u).MemSize);           // replaced: follows the media
+            Assert.Equal(wemB2, bank.MediaBytes(8u));
+        }
+
+        [Fact]
+        public void A_BKHD_shorter_than_its_version_is_refused()
+        {
+            var b = new List<byte>();
+            b.AddRange(Encoding.ASCII.GetBytes("BKHD"));
+            b.AddRange(BitConverter.GetBytes(2u));
+            b.AddRange(new byte[] { 1, 0 });
+            b.AddRange(Encoding.ASCII.GetBytes("HIRC"));
+            b.AddRange(BitConverter.GetBytes(8u));
+            b.AddRange(new byte[8]);
+            Assert.Throws<InvalidDataException>(() => Banks.Parse(b.ToArray()));
+        }
+
+        [Fact]
+        public void A_HIRC_entry_reaching_past_its_chunk_is_refused()
+        {
+            var b = new List<byte>();
+            b.AddRange(Encoding.ASCII.GetBytes("BKHD"));
+            b.AddRange(BitConverter.GetBytes(40u));
+            b.AddRange(new byte[40]);
+            b.AddRange(Encoding.ASCII.GetBytes("HIRC"));
+            b.AddRange(BitConverter.GetBytes(13u));
+            b.AddRange(BitConverter.GetBytes(1u));                          // one entry
+            b.AddRange(new byte[] { 2 });                                   // a Sound
+            b.AddRange(BitConverter.GetBytes(30u));                         // its body claims 30 bytes
+            b.AddRange(BitConverter.GetBytes(77u));                         // the entry's id
+            b.AddRange(Encoding.ASCII.GetBytes("STUB"));                    // another chunk to walk into
+            b.AddRange(BitConverter.GetBytes(40u));
+            b.AddRange(new byte[40]);
+            Assert.Throws<InvalidDataException>(() => Banks.Parse(b.ToArray()));
+        }
+
+        [Fact]
         public void The_commands_and_notes_name_the_kinds()
         {
             GameNowWithAudio();

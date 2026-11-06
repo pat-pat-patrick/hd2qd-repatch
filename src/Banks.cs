@@ -68,12 +68,23 @@ namespace Hd2Qd.Repatch
             public int MemAt;           // where the mem size sits in the HIRC chunk's bytes
         }
 
+        /// <summary>A Sound of a layout this plugin does not read names one of the media the
+        /// repair would replace, so its mem size could not be kept true; the bank is left as it
+        /// is. (The unknown layouts the game and the mods carry name only streamed sources, and
+        /// a repair of the embedded media does not touch those.) Its own kind of failure, so a
+        /// repair refuses instead of taking the game's bank as its fallback.</summary>
+        sealed class UnknownSoundException : Exception
+        {
+            public UnknownSoundException(string message) : base(message) { }
+        }
+
         /// <summary>A bank read once: its version, its chunks, its HIRC entries, its Sounds, and
         /// where its media sit in the bank's own bytes. The media are slices, not copies: a scan
         /// reads hundreds of banks and only compares them; a repair takes bytes out with
         /// MediaBytes and Hirc. Raw is the bank they slice into, and is dropped by a light read.
-        /// UnknownSounds counts the Sounds of a layout this plugin does not read; a bank that
-        /// has one is never rewritten, because a media swap could not keep its mem size true.</summary>
+        /// Sounds of a layout this plugin does not read are not parsed; UnknownSources holds the
+        /// sources they name (the same offset in every layout seen, 2026-11-06), and
+        /// UnknownSounds counts the ones too small to read a source from.</summary>
         public sealed class BankFile
         {
             public uint Version;
@@ -83,6 +94,7 @@ namespace Hd2Qd.Repatch
             public Dictionary<uint, (int Off, int Len)> Media = new Dictionary<uint, (int, int)>();
             public byte[] Raw;
             public int HircAt, HircLen;
+            public HashSet<uint> UnknownSources = new HashSet<uint>();
             public int UnknownSounds;
 
             public byte[] MediaBytes(uint id) { var m = Media[id]; return Banks.Slice(Raw, m.Off, m.Len); }
@@ -99,10 +111,10 @@ namespace Hd2Qd.Repatch
         }
 
         /// <summary>Two byte ranges, without copying either.</summary>
-        static bool Same(byte[] a, int at, byte[] b)
+        static bool Same(byte[] a, int at, int len, byte[] b)
         {
-            if (a.Length - at != b.Length) return false;
-            for (int i = 0; i < b.Length; i++) if (a[at + i] != b[i]) return false;
+            if (len != b.Length) return false;
+            for (int i = 0; i < len; i++) if (a[at + i] != b[i]) return false;
             return true;
         }
 
@@ -126,7 +138,11 @@ namespace Hd2Qd.Repatch
                 int size = (int)BitConverter.ToUInt32(raw, at + 4);
                 if (size < 0 || at + 8L + size > raw.Length) throw new InvalidDataException("a chunk of the bank runs past its end");
                 f.Chunks.Add((tag, at + 8, size));
-                if (tag == "BKHD") f.Version = BitConverter.ToUInt32(raw, at + 8) ^ VersionKey;
+                if (tag == "BKHD")
+                {
+                    if (size < 4) throw new InvalidDataException("the bank's BKHD header is damaged");
+                    f.Version = BitConverter.ToUInt32(raw, at + 8) ^ VersionKey;
+                }
                 else if (tag == "HIRC") { f.HircAt = at + 8; f.HircLen = size; }
                 else if (tag == "DIDX") { didxAt = at + 8; didxLen = size; }
                 else if (tag == "DATA") { dataAt = at + 8; dataLen = size; }
@@ -146,12 +162,13 @@ namespace Hd2Qd.Repatch
             if (f.HircLen < 4) throw new InvalidDataException("the bank's HIRC header is damaged");
             int n = BitConverter.ToInt32(raw, f.HircAt);
             if (n < 0 || 4L + n * 5 > f.HircLen) throw new InvalidDataException("the bank's HIRC header is damaged");
+            int hircEnd = f.HircAt + f.HircLen;
             int q = f.HircAt + 4;
             for (int i = 0; i < n; i++)
             {
-                if (q + 5 > raw.Length) throw new InvalidDataException("the bank's HIRC ends inside an entry");
+                if (q + 5 > hircEnd) throw new InvalidDataException("the bank's HIRC ends inside an entry");
                 int size = (int)BitConverter.ToUInt32(raw, q + 1);
-                if (size < 4 || q + 5L + size > raw.Length) throw new InvalidDataException("an entry of the bank's HIRC runs past its end");
+                if (size < 4 || q + 5L + size > hircEnd) throw new InvalidDataException("an entry of the bank's HIRC runs past its end");
                 uint id = BitConverter.ToUInt32(raw, q + 5);
                 f.Entries.Add(id);
                 if (raw[q] == 2)
@@ -166,7 +183,8 @@ namespace Hd2Qd.Repatch
                             MemSize = BitConverter.ToUInt32(raw, body + 13),
                             MemAt = body + 13 - f.HircAt,                    // where it sits in the HIRC chunk's bytes
                         });
-                    else f.UnknownSounds++;                                  // a Sound of a layout this plugin does not read
+                    else if (size >= 9) f.UnknownSources.Add(BitConverter.ToUInt32(raw, body + 5));
+                    else f.UnknownSounds++;                                  // too small to even read a source from
                 }
                 q += 5 + size;
             }
@@ -194,19 +212,19 @@ namespace Hd2Qd.Repatch
         /// caller then puts the game's bank in its place. Neither input is changed.</summary>
         public static byte[] Update(BankFile game, BankFile mine)
         {
-            if (game.UnknownSounds > 0 || mine.UnknownSounds > 0)
-                throw new InvalidDataException("the bank has a Sound of a layout this plugin does not know, so its media are left alone");
             var changed = new Dictionary<uint, byte[]>();
             foreach (var kv in mine.Media)
                 if (game.Media.TryGetValue(kv.Key, out var g))
                 {
                     var bytes = mine.MediaBytes(kv.Key);
-                    if (!Same(game.Raw, g.Off, bytes)) changed[kv.Key] = bytes;
+                    if (!Same(game.Raw, g.Off, g.Len, bytes)) changed[kv.Key] = bytes;
                 }
 
             var hirc = game.Hirc();
             foreach (var s in game.Sounds.Where(s => s.Kind == 0 && changed.ContainsKey(s.Source)))
                 Put(hirc, s.MemAt, changed[s.Source].Length);
+            if ((game.UnknownSounds > 0 && changed.Count > 0) || changed.Keys.Any(game.UnknownSources.Contains))
+                throw new UnknownSoundException("the bank has a Sound of a layout this plugin does not know that names one of the replaced media, so it is left as it is");
 
             byte[] data = null;                                          // the rebuilt DIDX's DATA, for the DATA chunk
             using (var o = new MemoryStream())
@@ -283,6 +301,10 @@ namespace Hd2Qd.Repatch
                 var fresh = Wrap(Update(Parse(officialRaw), mine), hadBlock, fileId);
                 res.Banks++;
                 return fresh;
+            }
+            catch (UnknownSoundException e)
+            {
+                res.Refused.Add(fileId.ToString("x16") + ": " + e.Message); return null;
             }
             catch (InvalidDataException)
             {
