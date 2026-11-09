@@ -70,7 +70,7 @@ The repair follows three earlier tools, written again here in C#:
   the safer rules: no update to an older version, the 10800437 → 10800438 path that keeps the
   mod's detail levels, the table of renumbered vertex formats, and the checks of an archive
   before it is changed.
-- The standalone repair tool **HD2 音效修复台 (HD2 Sound Studio)** by 40Hour (Bilibili): the audio repair's approach —
+- **HD2 音效修复台 (HD2 Sound Studio)** by 40Hour (Bilibili): the sound bank repair method comes from it —
   the game's current bank as the base, the mod's media back in, the mem sizes following the
   media, the result read back before it is written, and the game's own bank as the fallback.
 
@@ -139,5 +139,5 @@ The repair follows three earlier tools, written again here in C#:
 - eigeen 的 [hd2-mod-crates](https://github.com/eigeen/hd2-mod-crates)（MIT 或 Apache-2.0 许可）：
   更稳妥的规则，包括不降级版本、10800437 → 10800438 时保留 MOD 自身的细节层级、顶点格式的
   重新编号表，以及修改前对文件的检查。
-- Bilibili UP 主 40Hour 的独立修复工具 **HD2 音效修复台（HD2 Sound Studio）**：音频修复的思路——以游戏当前音库为底、
+- Bilibili UP 主 40Hour 的 **HD2 音效修复台（HD2 Sound Studio）**：音库修复方法来自该工具——以游戏当前音库为底、
   放回 MOD 媒体、mem size 跟随媒体、写入前回读校验，以及以游戏原版音库兜底。
