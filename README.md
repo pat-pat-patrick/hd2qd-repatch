@@ -1,4 +1,4 @@
-# HD2QD Repair
+# HD2QD Mod Repair
 
 A plugin of [HD2 Mod Quick Deploy](https://github.com/pat-pat-patrick/hd2-mod-cli). After a game
 update, mods made for the earlier version may no longer load, or may leave parts of the game
@@ -59,6 +59,8 @@ the .NET Framework 4.8 that Windows 10 (1903 and later) and Windows 11 include.
 
 ## Credits
 
+Sound bank and subtitle repair: contributed by [x402](https://github.com/x402) ([#2](https://github.com/pat-pat-patrick/hd2qd-repatch/pull/2)).
+
 The repair follows three earlier tools, written again here in C#:
 
 - [hd2-repatcher](https://github.com/RaidingForPants/hd2-repatcher) by Evie / RaidingForPants
@@ -74,7 +76,7 @@ The repair follows three earlier tools, written again here in C#:
 
 ---
 
-# HD2QD 修复
+# HD2QD MOD 修复
 
 [HD2 Mod Quick Deploy](https://github.com/pat-pat-patrick/hd2-mod-cli) 的插件。游戏更新后，为旧版本
 制作的 MOD 可能无法加载，或让游戏的部分内容失去声音与文字。本插件会找出 MOD 库中的此类 MOD，
@@ -126,6 +128,8 @@ The repair follows three earlier tools, written again here in C#:
 及以上）和 Windows 11 自带的 .NET Framework 4.8。
 
 ## 致谢
+
+音库与字幕修复：由 [x402](https://github.com/x402) 贡献（[#2](https://github.com/pat-pat-patrick/hd2qd-repatch/pull/2)）。
 
 修复方法沿用以下工具，并以 C# 重新实现：
 

@@ -210,12 +210,12 @@ namespace Hd2Qd.Repatch.Tests
         {
             Assert.Equal(2, Plugin.Api);
             Assert.Equal("window", Plugin.Kind);
-            Assert.Equal("修复", Plugin.Title("zh-CN"));
-            Assert.Equal("Repair", Plugin.Title("en"));
-            Assert.Equal("Repair", Plugin.Title("de"));                           // no German file: English
-            Assert.Equal("Repair", Plugin.Title(null));
-            Assert.StartsWith("游戏更新后", Plugin.Summary("zh-CN"));
-            Assert.StartsWith("After a game update", Plugin.Summary("pt-BR"));
+            Assert.Equal("MOD 修复", Plugin.Title("zh-CN"));
+            Assert.Equal("Mod repair", Plugin.Title("en"));
+            Assert.Equal("Mod repair", Plugin.Title("de"));                           // no German file: English
+            Assert.Equal("Mod repair", Plugin.Title(null));
+            Assert.StartsWith("修复游戏更新后出问题的 MOD", Plugin.Summary("zh-CN"));
+            Assert.StartsWith("Repairs mods that a game update broke", Plugin.Summary("pt-BR"));
             Assert.NotNull(typeof(Plugin).GetMethod("Open"));
             Assert.Equal(new[] { "repatch-check", "repatch", "repatch-undo" }, Plugin.Commands.Select(c => c[0]));
         }
@@ -400,14 +400,14 @@ namespace Hd2Qd.Repatch.Tests
             var note = Plugin.ModNote(dir, Host());
             Assert.Equal("Yellow", note["colour"]);
             Assert.Equal("Models outdated", note["text"]);
-            Assert.Equal("1 of its models was made for an earlier version of the game and may not load. Repair them in the Repair plugin.", note["tip"]);
+            Assert.Equal("1 of its models was made for an earlier version of the game and may not load. Repair them in the Mod repair plugin.", note["tip"]);
             Assert.False(note.ContainsKey("text_zh"));
             var zhHost = Host();
             zhHost["lang"] = "zh-CN";
             var zhNote = Plugin.ModNote(dir, zhHost);
             Assert.Equal("Yellow", zhNote["colour"]);
             Assert.Equal("模型需更新", zhNote["text"]);
-            Assert.Equal("其中 1 个模型为旧版游戏制作，可能无法加载。可在“修复”插件中修复。", zhNote["tip"]);
+            Assert.Equal("其中 1 个模型为旧版游戏制作，可能无法加载。可在“MOD 修复”插件中修复。", zhNote["tip"]);
             zhHost["lang"] = "zh-TW";                                       // no zh-TW file: by its language alone, zh: none, so English
             Assert.Equal("Models outdated", Plugin.ModNote(dir, zhHost)["text"]);
             Assert.Null(Plugin.ModNote(Path.Combine(Lib, "Current"), Host()));

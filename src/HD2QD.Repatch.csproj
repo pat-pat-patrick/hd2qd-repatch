@@ -12,7 +12,7 @@
     <AssemblyName>HD2QD.Repatch</AssemblyName>
     <RootNamespace>Hd2Qd.Repatch</RootNamespace>
     <Version>1.2.0</Version>
-    <Product>HD2QD Repair</Product>
+    <Product>HD2QD Mod Repair</Product>
     <Company>pat-pat-patrick</Company>
     <Copyright>MIT License</Copyright>
     <Deterministic>true</Deterministic>

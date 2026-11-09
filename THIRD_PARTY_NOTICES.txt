@@ -1,4 +1,4 @@
-HD2QD Model Repair follows the methods of the tools below, written again in C#.
+HD2QD Mod Repair follows the methods of the tools below, written again in C#.
 
 == hd2-repatcher ==
 https://github.com/RaidingForPants/hd2-repatcher
