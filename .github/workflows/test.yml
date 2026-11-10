@@ -1,0 +1,22 @@
+# Runs the tests on every push to main and on every pull request, outside pull requests included.
+# The tests use synthetic data only; checks against the real game are still made locally.
+name: test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: windows-latest          # .NET Framework 4.8 and WPF build on Windows only
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - run: dotnet test tests/Repatch.Tests.csproj --nologo
