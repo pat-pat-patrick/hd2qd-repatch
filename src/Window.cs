@@ -1,9 +1,11 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Documents;
 using System.Windows.Input;
 using System.Windows.Media;
 
@@ -52,6 +54,9 @@ namespace Hd2Qd.Repatch
                 this.host = host; this.lang = lang;
                 DockPanel.SetDock(head, Dock.Top);
                 Root.Children.Add(head);
+                var credits = Credits();
+                DockPanel.SetDock(credits, Dock.Bottom);
+                Root.Children.Add(credits);
                 Root.Children.Add(new ScrollViewer { Content = list, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, Margin = new Thickness(0, 12, 0, 0) });
             }
 
@@ -104,6 +109,32 @@ namespace Hd2Qd.Repatch
                 top.Children.Add(Small(T("intro"), new Thickness(0, 4, 16, 0)));
                 head.Children.Add(top);
                 head.Children.Add(new TextBlock { Text = line, FontSize = 15, FontWeight = FontWeights.SemiBold, Margin = new Thickness(0, 14, 0, 0), TextWrapping = TextWrapping.Wrap });
+            }
+
+            /// <summary>Where the sound bank repair method comes from: 40Hour's Bilibili page, linked
+            /// from the credits line (the user, 2026-11-11).</summary>
+            const string AuthorPage = "https://space.bilibili.com/157681854";
+
+            /// <summary>The credits at the window's foot: who contributed and whose methods the repair
+            /// follows, in the window's language; {0} in the text is 40Hour, a link to the author's page.</summary>
+            TextBlock Credits()
+            {
+                var t = Small("", new Thickness(0, 12, 0, 0));
+                var parts = T("credits").Split(new[] { "{0}" }, 2, StringSplitOptions.None);
+                t.Inlines.Add(new Run(parts[0]));
+                if (parts.Length == 2)
+                {
+                    var link = new Hyperlink(new Run("40Hour")) { NavigateUri = new Uri(AuthorPage), Foreground = B("Muted") };
+                    link.RequestNavigate += (s, e) =>
+                    {
+                        try { Process.Start(new ProcessStartInfo(e.Uri.AbsoluteUri) { UseShellExecute = true }); }
+                        catch (Exception x) when (x is System.ComponentModel.Win32Exception || x is InvalidOperationException) { }
+                        e.Handled = true;
+                    };
+                    t.Inlines.Add(link);
+                    t.Inlines.Add(new Run(parts[1]));
+                }
+                return t;
             }
 
             TextBlock Small(string text, Thickness margin) =>

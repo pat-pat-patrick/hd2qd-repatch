@@ -16,6 +16,7 @@
   "check_failed": "检查失败：{0}",
   "check_again": "重新检查",
   "intro": "游戏更新后，为旧版本制作的 MOD 资源可能无法加载，或让游戏的部分内容失去声音和文字。修复会将 MOD 的模型、音库与字幕表更新为当前游戏的数据：保留游戏当前的结构，放回 MOD 替换过的内容。原文件会保留，每次修复均可撤销。修复后需重新部署，改动才会在游戏中生效。",
+  "credits": "致谢：音库与字幕修复由 x402 贡献；音库修复方法来自 Bilibili UP 主 {0} 的音效维修台（Sound Restoration Studio）；模型修复沿用 hd2-repatcher（Evie / RaidingForPants）与 hd2-mod-crates（eigeen）。",
   "repair_all": "全部修复",
   "mods_outdated": "{0} 个 MOD 包含为旧版游戏制作的资源。",
   "mods_current": "所有 MOD 的资源均与当前游戏版本一致。",

@@ -216,6 +216,13 @@ namespace Hd2Qd.Repatch.Tests
             Assert.Equal("Mod repair", Plugin.Title(null));
             Assert.StartsWith("修复游戏更新后出问题的 MOD", Plugin.Summary("zh-CN"));
             Assert.StartsWith("Repairs mods that a game update broke", Plugin.Summary("pt-BR"));
+            foreach (var l in new[] { "en", "zh-CN" })                                // the credits line: 40Hour linked at {0}
+            {
+                var c = Words.Get(l, "credits");
+                Assert.Single(c.Split(new[] { "{0}" }, StringSplitOptions.None).Skip(1));
+                Assert.Contains("x402", c);
+                Assert.Contains("Sound Restoration Studio", c);
+            }
             Assert.NotNull(typeof(Plugin).GetMethod("Open"));
             Assert.Equal(new[] { "repatch-check", "repatch", "repatch-undo" }, Plugin.Commands.Select(c => c[0]));
         }

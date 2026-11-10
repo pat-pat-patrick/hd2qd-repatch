@@ -20,6 +20,7 @@
   "check_failed": "The check failed: {0}",
   "check_again": "Check again",
   "intro": "A game update can stop mod resources made for the earlier version from loading, or leave parts of the game without their sound or text. A repair updates a mod's models, sound banks and subtitle tables to the game's current ones: the game's current structure stays, and what the mod replaced is put back. The original files are kept, and every repair can be undone. Deploy afterwards to apply the changes in game.",
+  "credits": "Credits: sound bank and subtitle repair by x402; the sound bank repair method comes from Sound Restoration Studio (音效维修台) by {0} (Bilibili); the model repair follows hd2-repatcher (Evie / RaidingForPants) and hd2-mod-crates (eigeen).",
   "repair_all": "Repair all",
   "mods_outdated": "{0} mods have resources made for an earlier version of the game.",
   "mods_outdated_1": "{0} mod has resources made for an earlier version of the game.",
