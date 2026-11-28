@@ -27,7 +27,7 @@
   "mods_current": "Every mod's resources match the current version of the game.",
   "others_current": "{0} other mods replace game resources and are current.",
   "others_current_1": "{0} other mod replaces game resources and is current.",
-  "column_mod": "MOD",
+  "column_mod": "Mod",
   "column_status": "Status",
   "column_details": "Details",
   "badge_outdated": "Outdated",
